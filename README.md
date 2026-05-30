@@ -113,6 +113,28 @@ for r in results:
 engine.close()
 ```
 
+## Japanese Analyzer Example: Avoiding Noisy Substring Matches
+
+Japanese text search is different from simple substring matching.
+
+For example, if you search for `京都` using simple substring matching, a sentence containing `東京都` may also match because `東京都` contains the characters `京都`.
+
+However, with Japanese full-text analysis, `東京都` and `京都` can be treated as different terms.
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です")
+    engine.add("3", "京都市には任天堂の本社があります")
+
+    engine.commit()
+
+    for r in engine.search("京都", limit=10):
+        print(r.id, r.body, r.score)
+
+
 ---
 
 ## Recommended Usage
