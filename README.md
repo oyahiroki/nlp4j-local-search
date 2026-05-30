@@ -137,6 +137,58 @@ engine = SearchEngine("ja")
 engine = SearchEngine("en")
 ```
 
+## Google Colab での利用
+
+Google Colab でも簡単に利用できます。
+
+### インストール
+
+Colab のセルで以下を実行:
+
+```python
+!pip install nlp4j-local-search
+```
+
+### 使用例
+
+```python
+from nlp4j_local_search import SearchEngine
+
+# 検索エンジンを初期化
+with SearchEngine("ja") as engine:
+    # ドキュメントを追加
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です")
+    engine.add("3", "京都市には任天堂の本社があります")
+    engine.add_json({"id": "4", "body": "京都府は広いです"})
+    
+    # インデックスをコミット
+    engine.commit()
+    
+    # 検索を実行
+    results = engine.search("京都", limit=10)
+    
+    # 結果を表示
+    for r in results:
+        print(f"ID: {r.id}, Score: {r.score:.4f}")
+        print(f"Body: {r.body}")
+        print("-" * 50)
+```
+
+### GitHub リポジトリから直接インストール
+
+最新の開発版を使用する場合:
+
+```python
+!pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
+```
+
+### 注意事項
+
+- Google Colab には Java がプリインストールされているため、追加のセットアップは不要です
+- 初回実行時に JVM の起動に数秒かかる場合があります
+- セッションをリセットすると、インデックスデータは失われます（オンメモリのため）
+
 ## 設計思想
 
 ### ローカル検索
