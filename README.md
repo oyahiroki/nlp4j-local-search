@@ -1,91 +1,98 @@
-
-# Apache Lucene を利用したオンメモリ検索エンジン
-
-Elasticsearch、OpenSearch、Apache Solr の基盤技術である Apache Lucene を利用しています。
-
-サーバー構築や Docker は不要です。Python からすぐに検索を始められます。
-
 # nlp4j-local-search
 
-Python から簡単に利用できる、オンメモリのローカル検索エンジンです。
+English | [日本語](README_ja.md)
 
-内部的には Apache Lucene ベースの検索エンジンを利用し、日本語・英語などの全文検索を手軽に実行できます。
+**Use Apache Lucene from Python without running Elasticsearch, OpenSearch, Solr, or Docker.**
 
-サーバーの構築や Docker の起動は不要です。
+`nlp4j-local-search` is a lightweight in-memory full-text search library for Python.
 
-## 特徴
+It allows you to use Apache Lucene-based search functionality directly from Python, without setting up a search server.
 
-* Python から簡単に利用可能
-* オンメモリ検索
-* 検索インデックスをディスクに保存しない
-* Elasticsearch / OpenSearch / Solr 不要
-* Docker 不要
-* 日本語検索対応
-* 英語検索対応
-* Google Colab 対応予定
-* Apache Lucene ベース
-* 小規模データの検索や NLP 実験に最適
+This library is designed for:
 
-## 利用シーン
+- NLP experiments
+- RAG prototyping
+- Local full-text search
+- Jupyter Notebook and Google Colab experiments
+- Small search applications
+- Test code that needs temporary search indexes
 
-* 自然言語処理の実験
-* Embedding モデルの評価
-* RAG のプロトタイピング
-* Jupyter Notebook
-* Google Colab
-* テストコードでの検索処理
-* ローカル検索アプリケーション
+Internally, it uses Java and Apache Lucene, but Python users do not need to write Java code.
 
-## インストール
+---
 
-> **注意**: 現在、PyPI への公開準備中です。それまでは GitHub リポジトリから直接インストールしてください。
+## Why this library?
 
-### GitHub リポジトリからのインストール
+Elasticsearch, OpenSearch, and Apache Solr are powerful search engines, and they are all built on Apache Lucene.
 
-以下のいずれかの方法でインストールできます:
+However, for small experiments, local prototypes, or notebook-based workflows, setting up a full search server can be too heavy.
 
-**方法1: pip で直接インストール**
+With `nlp4j-local-search`, you can create a Lucene-based search index directly inside your Python process.
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en") as engine:
+    engine.add("1", "Developers are searching documents with a local search engine.")
+    engine.add("2", "A developer searched many documents yesterday.")
+    engine.add("3", "This tool searches local JSON documents.")
+
+    engine.commit()
+
+    for r in engine.search("search"):
+        print(r.id, r.body, r.score)
+```
+
+No server.  
+No Docker.  
+No external search engine process.
+
+---
+
+## Features
+
+- Python-first API
+- Apache Lucene-based full-text search
+- In-memory local search
+- No Elasticsearch required
+- No OpenSearch required
+- No Solr required
+- No Docker required
+- Japanese full-text search
+- English full-text search
+- JSON document input
+- Useful for NLP and RAG experiments
+
+---
+
+## Installation
+
+> Note: PyPI release is under preparation.  
+> For now, please install directly from GitHub.
 
 ```bash
 pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
 ```
 
-**方法2: リポジトリをクローンしてインストール**
+For development:
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/oyahiroki/nlp4j-local-search.git
 cd nlp4j-local-search
-
-# 開発モードでインストール
 pip install -e .
 ```
 
-### サンプルプログラムの実行
+---
 
-リポジトリに含まれるサンプルプログラムを実行する場合:
+## Requirements
 
-```bash
-# リポジトリをクローン（まだの場合）
-git clone https://github.com/oyahiroki/nlp4j-local-search.git
-cd nlp4j-local-search
+- Python 3.8 or later
+- Java runtime environment
+- jpype1
 
-# 依存パッケージをインストール
-pip install -e .
+---
 
-# サンプルプログラムを実行
-python example/example.py
-```
-
-実行結果の例:
-
-```
-2 京都は日本の都市です。 0.18059490621089935
-4 京都府は広いです 0.18059490621089935
-3 京都市には任天堂の本社があります 0.16212496161460876
-```
-
-## クイックスタート
+## Quick Start
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -102,237 +109,351 @@ results = engine.search("京都")
 
 for r in results:
     print(r.id, r.body, r.score)
+
+engine.close()
 ```
 
-## JSON ドキュメントの登録
+---
+
+## Recommended Usage
+
+Using `SearchEngine` as a context manager is recommended.
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です。")
+    engine.add("3", "京都市には任天堂の本社があります")
+    engine.add_json({"id": "4", "body": "京都府は広いです"})
+
+    engine.commit()
+
+    for r in engine.search("京都", limit=10):
+        print(r.id, r.body, r.score)
+```
+
+Example output:
+
+```text
+2 京都は日本の都市です。 0.18059490621089935
+4 京都府は広いです 0.18059490621089935
+3 京都市には任天堂の本社があります 0.16212496161460876
+```
+
+---
+
+## Adding Documents
+
+You can add a document by specifying an ID and body text.
+
+```python
+engine.add("1", "Kyoto is a historical city in Japan.")
+```
+
+---
+
+## Adding JSON Documents
+
+You can also add a document as a Python dictionary.
+
+```python
+engine.add_json({
+    "id": "1",
+    "body": "Kyoto is a historical city in Japan."
+})
+```
+
+Or as a JSON string.
 
 ```python
 engine.add_json("""
 {
-  "id": "1",
-  "body": "京都府は広いです"
+  "id": "2",
+  "body": "Osaka is a large city in western Japan."
 }
 """)
 ```
 
-## 検索
+This is useful for NLP workflows where JSON and JSONL are commonly used as intermediate data formats.
+
+---
+
+## Searching
 
 ```python
-results = engine.search("京都")
+results = engine.search("Kyoto")
 ```
 
-件数を指定する場合
+You can specify the maximum number of search results.
 
 ```python
-results = engine.search("京都", limit=10)
+results = engine.search("Kyoto", limit=10)
 ```
 
-## 言語設定
+Each result has the following attributes:
 
-日本語
+```python
+r.id
+r.body
+r.score
+```
+
+---
+
+## Language Settings
+
+Japanese:
 
 ```python
 engine = SearchEngine("ja")
 ```
 
-英語
+English:
 
 ```python
 engine = SearchEngine("en")
 ```
 
-## Google Colab での利用
+---
 
-Google Colab でも簡単に利用できます。
+## English Analyzer Example
 
-### インストール
+When using `SearchEngine("en")`, English text is analyzed with an English analyzer.
 
-Colab のセルで以下を実行:
+This means that search can handle common English word variations such as:
 
-```python
-# GitHub リポジトリから直接インストール
-!pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
-```
+- `search`
+- `searches`
+- `searched`
+- `searching`
 
-### 使用例（一括実行）
+It can also handle cases such as:
+
+- `document` / `documents`
+- `Lucene` / `Lucene's`
+- uppercase / lowercase differences
+
+This is useful when you want more than simple substring matching.
 
 ```python
 from nlp4j_local_search import SearchEngine
 
-# 検索エンジンを初期化
+with SearchEngine("en") as engine:
+    engine.add("1", "Developers are searching documents with a local search engine.")
+    engine.add("2", "A developer searched many documents yesterday.")
+    engine.add("3", "This tool searches local JSON documents.")
+    engine.add("4", "Lucene's EnglishAnalyzer is useful for English full-text search.")
+    engine.add("5", "The quick brown fox jumps over the lazy dog.")
+
+    engine.commit()
+
+    print("Query: search")
+    for r in engine.search("search", limit=10):
+        print(r.id, r.body, r.score)
+
+    print("Query: document")
+    for r in engine.search("document", limit=10):
+        print(r.id, r.body, r.score)
+
+    print("Query: lucene")
+    for r in engine.search("lucene", limit=10):
+        print(r.id, r.body, r.score)
+```
+
+Unlike simple substring matching, English full-text search can match related word forms such as `search`, `searched`, and `searching`.
+
+This makes it useful for local search, NLP experiments, and search baseline evaluation.
+
+---
+
+## Japanese Search Example
+
+For Japanese text, use `SearchEngine("ja")`.
+
+```python
+from nlp4j_local_search import SearchEngine
+
 with SearchEngine("ja") as engine:
-    # ドキュメントを追加
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です")
+    engine.add("3", "京都市には任天堂の本社があります")
+    engine.add("4", "大阪は関西の大都市です")
+
+    engine.commit()
+
+    for r in engine.search("京都", limit=10):
+        print(r.id, r.body, r.score)
+```
+
+This is useful when you want to try Japanese full-text search locally without setting up a search server.
+
+---
+
+## Google Colab
+
+`nlp4j-local-search` can also be used in Google Colab.
+
+```python
+!pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
+```
+
+Then:
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
     engine.add("1", "東京都は日本の都道府県のひとつです")
     engine.add("2", "京都は日本の都市です")
     engine.add("3", "京都市には任天堂の本社があります")
     engine.add_json({"id": "4", "body": "京都府は広いです"})
-    
-    # インデックスをコミット
+
     engine.commit()
-    
-    # 検索を実行
+
     results = engine.search("京都", limit=10)
-    
-    # 結果を表示
+
     for r in results:
         print(f"ID: {r.id}, Score: {r.score:.4f}")
         print(f"Body: {r.body}")
         print("-" * 50)
 ```
 
-### インタラクティブな使用例（セル単位で実行）
+Notes:
 
-Google Colab では、各セルを個別に実行してインタラクティブに操作できます。
+- The index is stored in memory.
+- If the Colab session is reset, the index will be lost.
+- JVM startup may take a few seconds on the first run.
 
-**セル 1: ライブラリのインポートと初期化**
+---
 
-```python
-from nlp4j_local_search import SearchEngine
+## Design Concept
 
-# 検索エンジンを初期化（日本語モード）
-engine = SearchEngine("ja")
-```
+### Local Search
 
-**セル 2: ドキュメントの追加**
+This library is not a search server.
 
-```python
-# ドキュメントを1件ずつ追加
-engine.add("1", "東京都は日本の都道府県のひとつです")
-engine.add("2", "京都は日本の都市です")
-engine.add("3", "京都市には任天堂の本社があります")
-```
+You do not need to run:
 
-**セル 3: JSON形式でドキュメントを追加**
+- Elasticsearch
+- OpenSearch
+- Solr
+- Docker
 
-```python
-# JSON形式でも追加可能
-engine.add_json({"id": "4", "body": "京都府は広いです"})
-engine.add_json({"id": "5", "body": "大阪は関西の大都市です"})
-```
+The search engine runs inside your Python process.
 
-**セル 4: インデックスのコミット**
+### In-Memory Index
 
-```python
-# 追加したドキュメントをインデックスに反映
-engine.commit()
-print("インデックスのコミットが完了しました")
-```
+By default, the search index is created in memory.
 
-**セル 5: 検索の実行**
+This makes the library useful for:
 
-```python
-# 「京都」で検索
-results = engine.search("京都", limit=10)
+- Temporary experiments
+- Unit tests
+- Jupyter Notebook
+- Google Colab
+- Proof-of-concept development
+- Local NLP workflows
 
-# 結果を表示
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
-```
+The index is not persisted to disk.
 
-**セル 6: 別のキーワードで検索**
+### Python-First API
+
+Although the internal implementation uses Java and Apache Lucene, the public API is designed for Python users.
 
 ```python
-# 「日本」で検索
-results = engine.search("日本", limit=5)
-
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
+engine = SearchEngine("en")
 ```
 
-**セル 7: さらにドキュメントを追加して再検索**
+That is enough to start using Lucene-based search from Python.
+
+---
+
+## Use Cases
+
+### NLP Experiments
+
+You can quickly create a searchable index from text data, Wikipedia-derived datasets, dictionary data, or intermediate NLP results.
+
+### RAG Prototyping
+
+Before building a full RAG system, you can test local keyword search behavior with small or medium-sized datasets.
+
+### Search Baseline for Embedding Experiments
+
+When evaluating embedding models, it is often useful to compare vector search results with traditional keyword-based full-text search.
+
+### Test Code
+
+Because the index is in memory, you can create and discard search indexes during automated tests.
+
+---
+
+## Current Status
+
+This project is currently in an early development stage.
+
+Current focus:
+
+- Simple local full-text search from Python
+- Japanese search
+- English search
+- JSON document input
+- In-memory indexing
+
+APIs may change in future versions.
+
+---
+
+## Roadmap
+
+Planned or considered features:
+
+- PyPI release
+- Improved Google Colab support
+- Vector search
+- Aggregation
+- JSON Query DSL
+- OpenSearch-compatible API
+
+---
+
+## Project Information
+
+Package name:
+
+```text
+nlp4j-local-search
+```
+
+Python module name:
 
 ```python
-# 新しいドキュメントを追加
-engine.add("6", "奈良には東大寺があります")
-engine.add("7", "神戸は港町として有名です")
-engine.commit()
-
-# 再度検索
-results = engine.search("関西", limit=10)
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
+nlp4j_local_search
 ```
 
-**セル 8: リソースのクリーンアップ**
+Current version:
 
-```python
-# 使用後はクローズ
-engine.close()
-print("検索エンジンをクローズしました")
+```text
+0.1.0
 ```
 
-### 注意事項
+---
 
-- Google Colab には Java がプリインストールされているため、追加のセットアップは不要です
-- 初回実行時に JVM の起動に数秒かかる場合があります
-- セッションをリセットすると、インデックスデータは失われます（オンメモリのため）
-
-## 設計思想
-
-### ローカル検索
-
-本ライブラリはサーバー型検索エンジンではありません。
-
-以下のような環境構築は不要です。
-
-* Elasticsearch
-* OpenSearch
-* Solr
-
-検索エンジンをローカルプロセス内で直接利用できます。
-
-### オンメモリ
-
-デフォルトでは検索インデックスをメモリ上に構築します。
-
-検索インデックスをディスクへ永続化しません。
-
-そのため、
-
-* 一時的な実験
-* テストコード
-* Notebook
-* 機密データを扱う PoC
-
-などに適しています。
-
-### Python ファースト
-
-内部実装は Java を利用していますが、利用者は Java を意識する必要はありません。
-
-```python
-engine = SearchEngine("ja")
-```
-
-だけで利用できます。
-
-## ロードマップ
-
-* [x] オンメモリ検索
-* [x] 日本語検索
-* [x] JSON ドキュメント登録
-* [x] Python パッケージ公開
-* [ ] Google Colab 対応
-* [ ] ベクトル検索
-* [ ] Aggregation
-* [ ] JSON Query DSL
-* [ ] OpenSearch 互換 API
-
-## ライセンス
+## License
 
 Apache License 2.0
 
-## 作者
+---
+
+## Author
 
 Hiroki Oya
 
 GitHub:
-https://github.com/oyahiroki
 
+```text
+https://github.com/oyahiroki
+```
 
