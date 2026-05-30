@@ -154,7 +154,7 @@ Colab のセルで以下を実行:
 !pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
 ```
 
-### 使用例
+### 使用例（一括実行）
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -178,6 +178,93 @@ with SearchEngine("ja") as engine:
         print(f"ID: {r.id}, Score: {r.score:.4f}")
         print(f"Body: {r.body}")
         print("-" * 50)
+```
+
+### インタラクティブな使用例（セル単位で実行）
+
+Google Colab では、各セルを個別に実行してインタラクティブに操作できます。
+
+**セル 1: ライブラリのインポートと初期化**
+
+```python
+from nlp4j_local_search import SearchEngine
+
+# 検索エンジンを初期化（日本語モード）
+engine = SearchEngine("ja")
+```
+
+**セル 2: ドキュメントの追加**
+
+```python
+# ドキュメントを1件ずつ追加
+engine.add("1", "東京都は日本の都道府県のひとつです")
+engine.add("2", "京都は日本の都市です")
+engine.add("3", "京都市には任天堂の本社があります")
+```
+
+**セル 3: JSON形式でドキュメントを追加**
+
+```python
+# JSON形式でも追加可能
+engine.add_json({"id": "4", "body": "京都府は広いです"})
+engine.add_json({"id": "5", "body": "大阪は関西の大都市です"})
+```
+
+**セル 4: インデックスのコミット**
+
+```python
+# 追加したドキュメントをインデックスに反映
+engine.commit()
+print("インデックスのコミットが完了しました")
+```
+
+**セル 5: 検索の実行**
+
+```python
+# 「京都」で検索
+results = engine.search("京都", limit=10)
+
+# 結果を表示
+for r in results:
+    print(f"ID: {r.id}, Score: {r.score:.4f}")
+    print(f"Body: {r.body}")
+    print("-" * 50)
+```
+
+**セル 6: 別のキーワードで検索**
+
+```python
+# 「日本」で検索
+results = engine.search("日本", limit=5)
+
+for r in results:
+    print(f"ID: {r.id}, Score: {r.score:.4f}")
+    print(f"Body: {r.body}")
+    print("-" * 50)
+```
+
+**セル 7: さらにドキュメントを追加して再検索**
+
+```python
+# 新しいドキュメントを追加
+engine.add("6", "奈良には東大寺があります")
+engine.add("7", "神戸は港町として有名です")
+engine.commit()
+
+# 再度検索
+results = engine.search("関西", limit=10)
+for r in results:
+    print(f"ID: {r.id}, Score: {r.score:.4f}")
+    print(f"Body: {r.body}")
+    print("-" * 50)
+```
+
+**セル 8: リソースのクリーンアップ**
+
+```python
+# 使用後はクローズ
+engine.close()
+print("検索エンジンをクローズしました")
 ```
 
 ### 注意事項
