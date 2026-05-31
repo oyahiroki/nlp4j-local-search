@@ -1,9 +1,10 @@
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
+
 # nlp4j-local-search
 
 English | [日本語](README_ja.md)
 
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
 **Use Apache Lucene from Python without running Elasticsearch, OpenSearch, Solr, or Docker.**
 
