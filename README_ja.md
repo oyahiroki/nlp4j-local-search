@@ -364,7 +364,7 @@ engine = SearchEngine("ja")
 * [x] 日本語検索
 * [x] JSON ドキュメント登録
 * [x] Python パッケージ公開
-* [ ] Google Colab 対応
+* [x] Google Colab 対応
 * [ ] ベクトル検索
 * [ ] Aggregation
 * [ ] JSON Query DSL
