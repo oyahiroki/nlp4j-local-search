@@ -143,6 +143,61 @@ engine = SearchEngine("ja")
 engine = SearchEngine("en")
 ```
 
+## ベクトル検索
+
+ベクトル検索機能を使用すると、数値ベクトルの類似度に基づいた検索が可能です。
+
+### 基本的な使い方
+
+```python
+from nlp4j_local_search import SearchEngine
+
+# ベクトル次元数を指定して初期化（例: 2次元）
+with SearchEngine("ja", vector_dimension=2) as engine:
+    # ベクトルを追加
+    engine.add("1_East", [1.0, 0.0])    # 東
+    engine.add("2_North", [1.0, 1.0])   # 北東
+    engine.add("3_West", [-1.0, 0.0])   # 西
+    engine.add("4_South", [-1.0, -1.0]) # 南西
+    
+    engine.commit()
+    
+    # ベクトルで検索
+    results = engine.search([0.9, 0.1], limit=10)
+    
+    for r in results:
+        print(f"ID: {r.id}, Score: {r.score}")
+```
+
+### 使用例: Embedding ベクトルの検索
+
+```python
+from nlp4j_local_search import SearchEngine
+
+# 例: 768次元のベクトル（BERT などの Embedding）
+vector_dim = 768
+
+with SearchEngine("ja", vector_dimension=vector_dim) as engine:
+    # ドキュメントの Embedding ベクトルを追加
+    engine.add("doc1", embedding_vector_1)  # embedding_vector_1 は長さ768のリスト
+    engine.add("doc2", embedding_vector_2)
+    engine.add("doc3", embedding_vector_3)
+    
+    engine.commit()
+    
+    # クエリの Embedding ベクトルで検索
+    results = engine.search(query_embedding_vector, limit=5)
+    
+    for r in results:
+        print(f"Document ID: {r.id}, Similarity Score: {r.score}")
+```
+
+### 注意事項
+
+- `vector_dimension` を指定した場合、テキスト検索は使用できません
+- すべてのベクトルは指定した次元数と一致する必要があります
+- ベクトルの要素は `float` 型として扱われます
+
 ## Google Colab での利用
 
 Google Colab でも簡単に利用できます。
@@ -365,7 +420,7 @@ engine = SearchEngine("ja")
 * [x] JSON ドキュメント登録
 * [x] Python パッケージ公開
 * [x] Google Colab 対応
-* [ ] ベクトル検索
+* [x] ベクトル検索
 * [ ] Aggregation
 * [ ] JSON Query DSL
 * [ ] OpenSearch 互換 API

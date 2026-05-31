@@ -1,6 +1,6 @@
 # SearchEngine クラス
 import json
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence, Union
 
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
@@ -12,6 +12,7 @@ class SearchEngine:
         self,
         lang: str = "ja",
         *,
+        vector_dimension: Optional[int] = None,
         classpath: Optional[Sequence[str]] = None,
         jvm_args: Optional[Sequence[str]] = None,
     ) -> None:
@@ -25,13 +26,22 @@ class SearchEngine:
             ) from e
 
         try:
-            self._java = LocalSearch(lang)
+            if vector_dimension is not None:
+                self._java = LocalSearch(lang, int(vector_dimension))
+                self.vector_dimension = vector_dimension
+            else:
+                self._java = LocalSearch(lang)
+                self.vector_dimension = None
             self.lang = lang
             self._closed = False
         except Exception as e:
             raise JavaSearchError(f"Failed to create LocalSearch(lang={lang})") from e
 
-    def add(self, id_or_doc: str | dict[str, Any], body: Optional[str] = None) -> None:
+    def add(
+        self,
+        id_or_doc: Union[str, dict[str, Any]],
+        body: Optional[Union[str, Sequence[float]]] = None
+    ) -> None:
         self._ensure_open()
 
         try:
@@ -42,7 +52,21 @@ class SearchEngine:
             if body is None:
                 raise InvalidDocumentError("body is required when id is specified")
 
-            self._java.add(str(id_or_doc), str(body))
+            # ベクトル検索の場合
+            if isinstance(body, (list, tuple)):
+                if self.vector_dimension is None:
+                    raise InvalidDocumentError(
+                        "vector_dimension must be specified in __init__ to add vectors"
+                    )
+                vector_array = [float(v) for v in body]
+                if len(vector_array) != self.vector_dimension:
+                    raise InvalidDocumentError(
+                        f"Vector dimension mismatch: expected {self.vector_dimension}, got {len(vector_array)}"
+                    )
+                self._java.add(str(id_or_doc), vector_array)
+            else:
+                # テキスト検索の場合
+                self._java.add(str(id_or_doc), str(body))
 
         except InvalidDocumentError:
             raise
@@ -76,12 +100,33 @@ class SearchEngine:
         except Exception as e:
             raise JavaSearchError("Failed to commit index") from e
 
-    def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+    def search(
+        self,
+        query: Union[str, Sequence[float]],
+        limit: int = 10
+    ) -> list[SearchResult]:
         self._ensure_open()
 
         try:
-            results = self._java.search(str(query), int(limit))
+            # ベクトル検索の場合
+            if isinstance(query, (list, tuple)):
+                if self.vector_dimension is None:
+                    raise InvalidDocumentError(
+                        "vector_dimension must be specified in __init__ to search with vectors"
+                    )
+                vector_array = [float(v) for v in query]
+                if len(vector_array) != self.vector_dimension:
+                    raise InvalidDocumentError(
+                        f"Vector dimension mismatch: expected {self.vector_dimension}, got {len(vector_array)}"
+                    )
+                results = self._java.search(vector_array, int(limit))
+            else:
+                # テキスト検索の場合
+                results = self._java.search(str(query), int(limit))
+            
             return [SearchResult.from_java(r) for r in results]
+        except InvalidDocumentError:
+            raise
         except Exception as e:
             raise JavaSearchError("Failed to search") from e
 
