@@ -71,14 +71,11 @@ No external search engine process.
 
 ## Installation
 
-> Note: PyPI release is under preparation.  
-> For now, please install directly from GitHub.
-
 ```bash
-pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
+pip install nlp4j-local-search
 ```
 
-For development:
+## Development version
 
 ```bash
 git clone https://github.com/oyahiroki/nlp4j-local-search.git

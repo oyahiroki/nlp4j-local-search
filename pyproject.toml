@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,35 +8,40 @@ version = "0.2.0"
 description = "Apache Lucene based in-memory local search engine for Python"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "Apache-2.0"}
+
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
 authors = [
-    {name = "Hiroki Oya"}
+  { name = "Hiroki Oya" }
 ]
+
 keywords = ["nlp", "search", "lucene", "japanese", "full-text-search"]
+
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Text Processing :: Linguistic",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Processing :: Linguistic",
 ]
+
 dependencies = [
-    "jpype1>=1.4.0",
+  "jpype1>=1.4.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/oyahiroki/nlp4j-local-search"
 Repository = "https://github.com/oyahiroki/nlp4j-local-search"
+Issues = "https://github.com/oyahiroki/nlp4j-local-search/issues"
 
-[tool.setuptools]
-packages = ["nlp4j_local_search"]
-package-dir = {"" = "src"}
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
 nlp4j_local_search = ["jars/*.jar"]
