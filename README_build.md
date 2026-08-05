@@ -41,7 +41,7 @@ Example:
 ```toml
 [project]
 name = "nlp4j-local-search"
-version = "0.2.1"
+version = "0.3.0"
 ```
 
 Important:
@@ -75,7 +75,7 @@ python -m build
 Expected output example:
 
 ```text
-Successfully built nlp4j_local_search-0.2.1.tar.gz and nlp4j_local_search-0.2.1-py3-none-any.whl
+Successfully built nlp4j_local_search-0.3.0.tar.gz and nlp4j_local_search-0.3.0-py3-none-any.whl
 ```
 
 The generated files are placed under `dist/`.
@@ -84,8 +84,8 @@ Example:
 
 ```text
 dist/
-  nlp4j_local_search-0.2.1.tar.gz
-  nlp4j_local_search-0.2.1-py3-none-any.whl
+  nlp4j_local_search-0.3.0.tar.gz
+  nlp4j_local_search-0.3.0-py3-none-any.whl
 ```
 
 ## Check the package
@@ -99,8 +99,8 @@ python -m twine check dist/*
 Expected output example:
 
 ```text
-Checking dist/nlp4j_local_search-0.2.1-py3-none-any.whl: PASSED
-Checking dist/nlp4j_local_search-0.2.1.tar.gz: PASSED
+Checking dist/nlp4j_local_search-0.3.0-py3-none-any.whl: PASSED
+Checking dist/nlp4j_local_search-0.3.0.tar.gz: PASSED
 ```
 
 ## Check package size
@@ -143,15 +143,31 @@ python -m venv .venv-release-test
 source .venv-release-test/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install dist/nlp4j_local_search-0.2.1-py3-none-any.whl
+python -m pip install dist/nlp4j_local_search-0.3.0-py3-none-any.whl
 ```
 
-Check that the package can be imported.
+Check that the package can be imported and basic search works.
 
 ```bash
 python - <<'PY'
 import nlp4j_local_search
-print(nlp4j_local_search)
+from nlp4j_local_search import SearchEngine
+
+# Keyword search smoke test
+with SearchEngine("en") as engine:
+    engine.add_json({"id": "1", "body": "Kyoto is a historic city.", "category": "city"})
+    engine.add_json({"id": "2", "body": "Nintendo is a company.",    "category": "company"})
+    engine.commit()
+
+    # Basic keyword search
+    results = engine.search("Kyoto", limit=10)
+    assert len(results) == 1, f"Expected 1, got {len(results)}"
+
+    # Field filtering
+    results = engine.search("", limit=10, filters={"category": "city"})
+    assert len(results) == 1, f"Expected 1, got {len(results)}"
+
+print("smoke test passed")
 PY
 ```
 
@@ -206,7 +222,7 @@ Install the package from TestPyPI.
 python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --no-deps \
-  nlp4j-local-search==0.2.1
+  nlp4j-local-search==0.3.0
 ```
 
 Check import.
@@ -259,7 +275,7 @@ https://pypi.org/project/nlp4j-local-search/
 You can also check a specific version.
 
 ```text
-https://pypi.org/project/nlp4j-local-search/0.2.1/
+https://pypi.org/project/nlp4j-local-search/0.3.0/
 ```
 
 ## Install from PyPI
@@ -271,7 +287,7 @@ python -m venv .venv-pypi-test
 source .venv-pypi-test/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install nlp4j-local-search==0.2.1
+python -m pip install nlp4j-local-search==0.3.0
 ```
 
 Check installation.
@@ -302,21 +318,28 @@ After confirming that the release was successful, commit the release changes.
 
 ```bash
 git status
-git add pyproject.toml README.md README_build.md
-git commit -m "Release v0.2.1"
+git add pyproject.toml \
+        README.md README_ja.md README_build.md README_verup.md \
+        src/nlp4j_local_search/engine.py \
+        src/nlp4j_local_search/jars/nlp4j-localsearch.jar \
+        examples/example_003_field_search.py \
+        examples/example_004_keyword_and_field_search.py \
+        examples/example_005_vector_and_field_search.py \
+        tests/test_field_search.py
+git commit -m "Release v0.3.0"
 ```
 
 Create a Git tag.
 
 ```bash
-git tag v0.2.1
+git tag v0.3.0
 git push origin main
-git push origin v0.2.1
+git push origin v0.3.0
 ```
 
 ## Full command example
 
-Replace `0.2.1` with the actual release version.
+Replace `0.3.0` with the actual release version.
 
 ```bash
 # Install build tools
@@ -380,7 +403,7 @@ Solution:
 Example:
 
 ```toml
-version = "0.2.2"
+version = "0.3.1"
 ```
 
 ### License classifier error

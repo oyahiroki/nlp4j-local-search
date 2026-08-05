@@ -1,0 +1,904 @@
+## 結論
+
+最も自然なのは、既存の `search()` と `add()` を維持したまま、次の2つのキーワード引数を追加する設計です。
+
+```python
+engine.search(query, limit=10, filters={...})
+engine.add(id, body_or_vector, fields={...})
+```
+
+既存コードはそのまま動きます。
+
+```python
+engine.search("京都", limit=10)
+engine.search([0.9, 0.1], limit=10)
+engine.add("1", "京都は日本の都市です")
+engine.add("1_East", [1.0, 0.0])
+```
+
+現在の Python 実装は、`query` が文字列かベクトルかを判定して同じ `search()` から Java のオーバーロードを呼び分けています。この構造は変更せず、`filters` だけを追加するのが最小の拡張です。
+
+---
+
+# 1. 推奨するPython API
+
+## キーワード検索＋フィールド絞り込み
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add_json({
+        "id": "1",
+        "body": "京都は日本の歴史的な都市です",
+        "category": "city",
+        "country": "Japan"
+    })
+    engine.add_json({
+        "id": "2",
+        "body": "任天堂の本社は京都にあります",
+        "category": "company",
+        "country": "Japan"
+    })
+    engine.add_json({
+        "id": "3",
+        "body": "パリはフランスの都市です",
+        "category": "city",
+        "country": "France"
+    })
+
+    engine.commit()
+
+    results = engine.search(
+        "京都",
+        limit=10,
+        filters={"category": "city"}
+    )
+
+    for result in results:
+        print(result.id, result.body, result.score)
+```
+
+フィルターを複数指定した場合は、すべてAND条件にします。
+
+```python
+results = engine.search(
+    "都市",
+    limit=10,
+    filters={
+        "category": "city",
+        "country": "Japan"
+    }
+)
+```
+
+これは添付された Java の `search(query, limit, filters)` と同じ考え方です。Java例でも複数のフィールド条件はANDとして扱われています。
+
+フィールドだけで検索する場合は、空文字列を `match_all` として扱えます。
+
+```python
+results = engine.search(
+    "",
+    limit=10,
+    filters={"country": "Japan"}
+)
+```
+
+フィールド値は全文検索ではなく、keywordフィールドに対する完全一致の `term` 検索とするのがよいでしょう。添付されたフィールド検索例もこの仕様です。
+
+---
+
+## ベクトル検索＋フィールド絞り込み
+
+ベクトル検索の場合、検索時だけでなく、ベクトル登録時にもフィールドを同一ドキュメントへ保存する必要があります。
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja", vector_dimension=2) as engine:
+    engine.add(
+        "1_tech_east",
+        [1.0, 0.0],
+        fields={
+            "category": "tech",
+            "country": "Japan"
+        }
+    )
+
+    engine.add(
+        "2_travel_east",
+        [0.9, 0.2],
+        fields={
+            "category": "travel",
+            "country": "Japan"
+        }
+    )
+
+    engine.add(
+        "3_tech_north",
+        [0.0, 1.0],
+        fields={
+            "category": "tech",
+            "country": "USA"
+        }
+    )
+
+    engine.commit()
+
+    query_vector = [0.9, 0.1]
+
+    results = engine.search(
+        query_vector,
+        limit=10,
+        filters={"category": "tech"}
+    )
+
+    for result in results:
+        print(result.id, result.score)
+```
+
+添付された Java 例でも、ベクトル登録時に `add(id, vector, fields)`、検索時に `search(vector, limit, filters)` を使用しています。
+
+---
+
+# 2. APIシグネチャ
+
+Python側は、次の形がよいでしょう。
+
+```python
+def add(
+    self,
+    id_or_doc,
+    body=None,
+    *,
+    fields=None
+) -> None:
+    ...
+```
+
+```python
+def search(
+    self,
+    query,
+    limit: int = 10,
+    *,
+    filters=None
+) -> list[SearchResult]:
+    ...
+```
+
+`fields` と `filters` をキーワード専用引数にするのがポイントです。
+
+これにより、次の既存コードは完全に互換性を維持できます。
+
+```python
+engine.search("京都", 10)
+engine.search("京都", limit=10)
+engine.search(vector, limit=10)
+
+engine.add("1", "本文")
+engine.add("1", vector)
+```
+
+追加機能を使う場合だけ、次のように指定します。
+
+```python
+engine.search("京都", filters={"category": "city"})
+engine.search(vector, filters={"category": "tech"})
+engine.add("1", vector, fields={"category": "tech"})
+```
+
+---
+
+# 3. Pythonラッパーの実装例
+
+以下は、現在の `engine.py` を拡張する場合の中心部分です。
+
+```python
+from collections.abc import Mapping, Sequence
+from typing import Any, Optional, Union
+
+from jpype import JArray, JFloat
+
+FilterMap = Mapping[str, str]
+
+
+def _to_java_string_map(
+    values: Optional[FilterMap],
+    *,
+    argument_name: str,
+):
+    """PythonのdictをJavaのHashMap<String, String>へ変換する。"""
+    if not values:
+        return None
+
+    from java.util import HashMap
+
+    java_map = HashMap()
+
+    for field_name, field_value in values.items():
+        if not isinstance(field_name, str) or not field_name:
+            raise InvalidDocumentError(
+                f"{argument_name} field names must be non-empty strings"
+            )
+
+        if not isinstance(field_value, str):
+            raise InvalidDocumentError(
+                f"{argument_name}[{field_name!r}] must be a string"
+            )
+
+        java_map.put(field_name, field_value)
+
+    return java_map
+```
+
+`add()` は次のように拡張できます。
+
+```python
+def add(
+    self,
+    id_or_doc: Union[str, dict[str, Any]],
+    body: Optional[Union[str, Sequence[float]]] = None,
+    *,
+    fields: Optional[FilterMap] = None,
+) -> None:
+    self._ensure_open()
+
+    try:
+        if isinstance(id_or_doc, dict):
+            if fields:
+                raise InvalidDocumentError(
+                    "fields cannot be used when id_or_doc is already a dict"
+                )
+            self.add_json(id_or_doc)
+            return
+
+        if body is None:
+            raise InvalidDocumentError(
+                "body is required when id is specified"
+            )
+
+        reserved_fields = {"id", "body", "vector"}
+        if fields:
+            conflicts = reserved_fields.intersection(fields.keys())
+            if conflicts:
+                raise InvalidDocumentError(
+                    f"reserved field names cannot be used: "
+                    f"{sorted(conflicts)}"
+                )
+
+        # ベクトル文書
+        if isinstance(body, (list, tuple)):
+            if self.vector_dimension is None:
+                raise InvalidDocumentError(
+                    "vector_dimension must be specified "
+                    "in __init__ to add vectors"
+                )
+
+            vector_values = [float(value) for value in body]
+
+            if len(vector_values) != self.vector_dimension:
+                raise InvalidDocumentError(
+                    "Vector dimension mismatch: "
+                    f"expected {self.vector_dimension}, "
+                    f"got {len(vector_values)}"
+                )
+
+            # JPypeのオーバーロード解決を安定させるため、
+            # float[]を明示的に生成する
+            vector_array = JArray(JFloat)(vector_values)
+            java_fields = _to_java_string_map(
+                fields,
+                argument_name="fields",
+            )
+
+            if java_fields is None:
+                self._java.add(str(id_or_doc), vector_array)
+            else:
+                self._java.add(
+                    str(id_or_doc),
+                    vector_array,
+                    java_fields,
+                )
+
+        # テキスト文書
+        else:
+            if fields:
+                document = {
+                    "id": str(id_or_doc),
+                    "body": str(body),
+                    **dict(fields),
+                }
+                self.add_json(document)
+            else:
+                self._java.add(str(id_or_doc), str(body))
+
+    except InvalidDocumentError:
+        raise
+    except Exception as exc:
+        raise JavaSearchError(
+            "Failed to add document"
+        ) from exc
+```
+
+テキスト文書については、すでに存在する `add_json()` を利用できます。現在の Java 側では、`id` と `body` 以外のJSONフィールドをkeywordフィールドとして動的登録する構造になっているため、この方針と相性がよいです。
+
+`search()` は次のように変更できます。
+
+```python
+def search(
+    self,
+    query: Union[str, Sequence[float]],
+    limit: int = 10,
+    *,
+    filters: Optional[FilterMap] = None,
+) -> list[SearchResult]:
+    self._ensure_open()
+
+    if limit < 1:
+        raise InvalidDocumentError("limit must be greater than 0")
+
+    try:
+        java_filters = _to_java_string_map(
+            filters,
+            argument_name="filters",
+        )
+
+        # ベクトル検索
+        if isinstance(query, (list, tuple)):
+            if self.vector_dimension is None:
+                raise InvalidDocumentError(
+                    "vector_dimension must be specified "
+                    "in __init__ to search with vectors"
+                )
+
+            vector_values = [float(value) for value in query]
+
+            if len(vector_values) != self.vector_dimension:
+                raise InvalidDocumentError(
+                    "Vector dimension mismatch: "
+                    f"expected {self.vector_dimension}, "
+                    f"got {len(vector_values)}"
+                )
+
+            vector_array = JArray(JFloat)(vector_values)
+
+            if java_filters is None:
+                java_results = self._java.search(
+                    vector_array,
+                    int(limit),
+                )
+            else:
+                java_results = self._java.search(
+                    vector_array,
+                    int(limit),
+                    java_filters,
+                )
+
+        # キーワード検索
+        elif isinstance(query, str):
+            if java_filters is None:
+                java_results = self._java.search(
+                    query,
+                    int(limit),
+                )
+            else:
+                java_results = self._java.search(
+                    query,
+                    int(limit),
+                    java_filters,
+                )
+
+        else:
+            raise InvalidDocumentError(
+                "query must be a string or a sequence of floats"
+            )
+
+        return [
+            SearchResult.from_java(result)
+            for result in java_results
+        ]
+
+    except InvalidDocumentError:
+        raise
+    except Exception as exc:
+        raise JavaSearchError(
+            "Failed to search"
+        ) from exc
+```
+
+現在の実装では Python のリストをそのまま Java に渡していますが、オーバーロードが増えるとJPypeのメソッド解決が曖昧になる可能性があります。したがって、`JArray(JFloat)` と `HashMap` を明示的に作る方が安全です。
+
+---
+
+# 4. Java側の公開API
+
+Java側には、次のオーバーロードを用意します。
+
+```java
+public SearchResult[] search(String query, int limit);
+
+public SearchResult[] search(
+        String query,
+        int limit,
+        Map<String, String> filters);
+
+public SearchResult[] search(float[] vector, int limit);
+
+public SearchResult[] search(
+        float[] vector,
+        int limit,
+        Map<String, String> filters);
+```
+
+登録側にも、ベクトル＋フィールド用のオーバーロードを追加します。
+
+```java
+public void add(String id, float[] vector);
+
+public void add(
+        String id,
+        float[] vector,
+        Map<String, String> fields);
+```
+
+この形であれば、添付された既存のキーワード検索とベクトル検索の呼び出しは変更されません。 
+
+---
+
+# 5. Java側のベクトル登録実装
+
+```java
+public void add(
+        String id,
+        float[] vector,
+        Map<String, String> fields) {
+
+    if (id == null || id.isBlank()) {
+        throw new IllegalArgumentException(
+                "id must not be empty");
+    }
+
+    if (vector == null) {
+        throw new IllegalArgumentException(
+                "vector must not be null");
+    }
+
+    var builder = schema.document()
+            .put("id", id)
+            .putVector("vector", vector);
+
+    if (fields != null) {
+        for (Map.Entry<String, String> entry
+                : fields.entrySet()) {
+
+            String fieldName = entry.getKey();
+            String value = entry.getValue();
+
+            validateAdditionalField(fieldName, value);
+
+            ensureKeywordField(fieldName);
+            builder.put(fieldName, value);
+        }
+    }
+
+    try {
+        index.add(builder.build());
+    } catch (IOException e) {
+        throw new LocalSearchException(
+                e.getMessage(), e);
+    }
+}
+
+private void validateAdditionalField(
+        String fieldName,
+        String value) {
+
+    if (fieldName == null || fieldName.isBlank()) {
+        throw new IllegalArgumentException(
+                "field name must not be empty");
+    }
+
+    if ("id".equals(fieldName)
+            || "body".equals(fieldName)
+            || "vector".equals(fieldName)) {
+        throw new IllegalArgumentException(
+                "reserved field name: " + fieldName);
+    }
+
+    if (value == null) {
+        throw new IllegalArgumentException(
+                "field value must not be null: "
+                        + fieldName);
+    }
+}
+```
+
+追加フィールドは、テキスト文書の `addJson()` と同様にkeywordフィールドとして登録します。
+
+```java
+private void ensureKeywordField(String fieldName) {
+    schema.addIfAbsent(
+            fieldName,
+            FieldTypeDef.keyword()
+                    .stored(true)
+                    .aggregatable(true));
+}
+```
+
+---
+
+# 6. キーワード検索＋フィルターのJava実装
+
+公開メソッドは簡単なオーバーロードにします。
+
+```java
+public SearchResult[] search(
+        String query,
+        int limit,
+        Map<String, String> filters) {
+
+    return executeSearch(
+            createTextSearchRequest(
+                    query,
+                    limit,
+                    filters));
+}
+```
+
+リクエスト生成部分です。
+
+```java
+private JsonNode createTextSearchRequest(
+        String query,
+        int limit,
+        Map<String, String> filters) {
+
+    if (filters == null || filters.isEmpty()) {
+        return createTextSearchRequest(query, limit);
+    }
+
+    JsonNode root = JsonNode.object();
+    root.put("size", limit);
+
+    JsonNode boolQuery = JsonNode.object();
+
+    JsonNode must = JsonNode.array();
+
+    if (query == null || query.isEmpty()) {
+        must.add(
+                JsonNode.object().put(
+                        "match_all",
+                        JsonNode.object()));
+    } else {
+        must.add(
+                JsonNode.object().put(
+                        "match",
+                        JsonNode.object().put(
+                                default_field_name,
+                                query)));
+    }
+
+    boolQuery.put("must", must);
+    boolQuery.put(
+            "filter",
+            createTermFilterArray(filters));
+
+    root.put(
+            "query",
+            JsonNode.object().put(
+                    "bool",
+                    boolQuery));
+
+    return root;
+}
+
+private JsonNode createTermFilterArray(
+        Map<String, String> filters) {
+
+    JsonNode filterArray = JsonNode.array();
+
+    for (Map.Entry<String, String> entry
+            : filters.entrySet()) {
+
+        filterArray.add(
+                JsonNode.object().put(
+                        "term",
+                        JsonNode.object().put(
+                                entry.getKey(),
+                                entry.getValue())));
+    }
+
+    return filterArray;
+}
+```
+
+全文検索部分は `must`、フィールド条件は `filter` に入れます。
+
+`filter` にすることで、categoryやcountryがスコア計算に影響しません。スコアは本文のキーワード一致度だけで決まります。
+
+---
+
+# 7. ベクトル検索＋フィルターのJava実装
+
+公開メソッドです。
+
+```java
+public SearchResult[] search(
+        float[] vector,
+        int limit,
+        Map<String, String> filters) {
+
+    return executeSearch(
+            createVectorSearchRequest(
+                    vector,
+                    limit,
+                    filters));
+}
+```
+
+リクエスト生成部分です。
+
+```java
+private JsonNode createVectorSearchRequest(
+        float[] vector,
+        int limit,
+        Map<String, String> filters) {
+
+    JsonNode root = JsonNode.object();
+    root.put("size", limit);
+
+    JsonNode knn = JsonNode.object();
+    knn.put("field", "vector");
+    knn.put("query_vector", vector);
+    knn.put("k", limit);
+
+    if (filters != null && !filters.isEmpty()) {
+        JsonNode boolFilter = JsonNode.object();
+        boolFilter.put(
+                "filter",
+                createTermFilterArray(filters));
+
+        knn.put(
+                "filter",
+                JsonNode.object().put(
+                        "bool",
+                        boolFilter));
+    }
+
+    root.put("knn", knn);
+
+    return root;
+}
+```
+
+この場合、`LuceneLocalSearchApi` 側で `knn.filter` を解析し、LuceneのKNNクエリへ渡します。
+
+概念的には次の処理です。
+
+```java
+Query filterQuery =
+        parseFilterQuery(knnNode.get("filter"));
+
+KnnFloatVectorQuery query;
+
+if (filterQuery == null) {
+    query = new KnnFloatVectorQuery(
+            fieldName,
+            queryVector,
+            k);
+} else {
+    query = new KnnFloatVectorQuery(
+            fieldName,
+            queryVector,
+            k,
+            filterQuery);
+}
+```
+
+ここは非常に重要です。
+
+次のような後処理にはしないでください。
+
+```java
+// 非推奨
+SearchResult[] nearest = search(vector, limit);
+SearchResult[] filtered = filterAfterSearch(nearest, filters);
+```
+
+後処理方式では、フィルター対象外の文書が上位を占めた場合、本来フィルター条件内で上位になる文書を取得できません。また、指定した `limit` より結果が少なくなります。
+
+添付されたベクトル＋フィールド検索例でも、フィルターを `KnnFloatVectorQuery` の第4引数に渡し、対象文書集合の中から真の上位k件を取得する仕様になっています。
+
+---
+
+# 8. `SemanticSearch`への反映
+
+現在の `SemanticSearch` のサンプルは、IDとテキストだけを登録し、検索結果の `metadata` は空になっています。
+
+Embedding層にもフィルターを公開するなら、次のような形式が自然です。
+
+```python
+from nlp4j_local_search_embedding import SemanticSearch
+
+app = SemanticSearch("ja")
+
+app.add({
+    "doc1": {
+        "text": "自動車が走っています。",
+        "category": "car",
+        "language": "ja"
+    },
+    "doc2": {
+        "text": "自転車を買います",
+        "category": "bicycle",
+        "language": "ja"
+    },
+    "doc3": {
+        "text": "サイクリングが趣味です",
+        "category": "bicycle",
+        "language": "ja"
+    },
+    "doc4": {
+        "text": "Go shopping by bicycle.",
+        "category": "bicycle",
+        "language": "en"
+    }
+})
+
+app.commit()
+
+results = app.search(
+    "自転車",
+    limit=10,
+    filters={
+        "category": "bicycle",
+        "language": "ja"
+    }
+)
+```
+
+内部では次のように処理します。
+
+```python
+for document_id, document in documents.items():
+    text = document["text"]
+
+    metadata = {
+        key: value
+        for key, value in document.items()
+        if key != "text"
+    }
+
+    vector = self.embed(text)
+
+    self.engine.add(
+        document_id,
+        vector,
+        fields=metadata
+    )
+```
+
+検索時は、Embeddingしたクエリベクトルと `filters` をそのまま下位層へ渡します。
+
+```python
+def search(self, query, limit=10, *, filters=None):
+    query_vector = self.embed_query(query)
+
+    return self.engine.search(
+        query_vector,
+        limit=limit,
+        filters=filters
+    )
+```
+
+---
+
+# 9. 単純APIと高度なAPIを分ける
+
+公開APIは、まず完全一致のANDフィルターだけに限定するのがよいと思います。
+
+```python
+filters={
+    "category": "city",
+    "country": "Japan"
+}
+```
+
+意味は常に次のとおりです。
+
+```text
+category == "city"
+AND
+country == "Japan"
+```
+
+OR、複数値、範囲検索、否定条件まで `filters` に詰め込むと、急速に複雑になります。
+
+そのため、高度な検索は別にします。
+
+```python
+engine.search_json({
+    "query": {
+        "bool": {
+            "must": [
+                {"match": {"text_ja": "京都"}}
+            ],
+            "filter": [
+                {
+                    "terms": {
+                        "category": ["city", "tourism"]
+                    }
+                },
+                {
+                    "range": {
+                        "year": {"gte": 2020}
+                    }
+                }
+            ]
+        }
+    },
+    "size": 10
+})
+```
+
+APIを二層にすると整理しやすくなります。
+
+| API                                 | 用途                 |
+| ----------------------------------- | ------------------ |
+| `search(query, limit, filters=...)` | 日常的な簡単検索           |
+| `search_json(request)`              | OpenSearch互換の高度な検索 |
+
+---
+
+# 10. 最終的な推奨仕様
+
+```python
+# 従来のキーワード検索
+engine.search("京都", limit=10)
+
+# キーワード＋フィールド絞り込み
+engine.search(
+    "京都",
+    limit=10,
+    filters={"category": "city"}
+)
+
+# フィールド絞り込みのみ
+engine.search(
+    "",
+    limit=10,
+    filters={"country": "Japan"}
+)
+
+# 従来のベクトル登録
+engine.add("doc1", vector)
+
+# ベクトル＋フィールド登録
+engine.add(
+    "doc1",
+    vector,
+    fields={"category": "tech"}
+)
+
+# 従来のベクトル検索
+engine.search(vector, limit=10)
+
+# ベクトル＋フィールド絞り込み
+engine.search(
+    vector,
+    limit=10,
+    filters={"category": "tech"}
+)
+```
+
+この設計には次の利点があります。
+
+* 既存APIとの後方互換性がある
+* キーワード検索とベクトル検索の書き方が統一される
+* Python利用者はJavaのオーバーロードを意識しなくてよい
+* フィルターは常にkeyword完全一致かつANDという明確な仕様になる
+* KNN検索ではフィルター対象集合の中から正しい上位k件を取得できる
+* 将来は `search_json()` でOR、range、termsなどを拡張できる
+
+特に、**検索側に `filters` を追加するだけではなく、ベクトル登録側にも `fields` を追加する**ことが、設計上の重要なポイントです。

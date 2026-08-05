@@ -1,6 +1,8 @@
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
+https://github.com/oyahiroki/nlp4j-local-search
+
 # nlp4j-local-search
 
 English | [日本語](README_ja.md)
@@ -65,6 +67,9 @@ No external search engine process.
 - Japanese full-text search
 - English full-text search
 - JSON document input
+- **Field filtering** — filter results by exact-match field values (AND conditions)
+- **Vector search (KNN)** — nearest-neighbour search using float vectors
+- **Vector search with field filters** — KNN search scoped to a field-filtered subset
 - Useful for NLP and RAG experiments
 
 ---
@@ -134,7 +139,7 @@ with SearchEngine("ja") as engine:
 
     for r in engine.search("京都", limit=10):
         print(r.id, r.body, r.score)
-
+```
 
 ---
 
@@ -175,6 +180,18 @@ You can add a document by specifying an ID and body text.
 engine.add("1", "Kyoto is a historical city in Japan.")
 ```
 
+You can also attach extra fields to a document for later filtering.
+
+```python
+engine.add("1", "Kyoto is a historical city in Japan.",
+           fields={"category": "city", "country": "Japan"})
+engine.add("2", "Nintendo is headquartered in Kyoto.",
+           fields={"category": "company", "country": "Japan"})
+```
+
+`fields` values must be strings and are stored as keyword fields (exact-match, not analyzed).
+The field names `id`, `body`, and `vector` are reserved and cannot be used.
+
 ---
 
 ## Adding JSON Documents
@@ -184,7 +201,9 @@ You can also add a document as a Python dictionary.
 ```python
 engine.add_json({
     "id": "1",
-    "body": "Kyoto is a historical city in Japan."
+    "body": "Kyoto is a historical city in Japan.",
+    "category": "city",
+    "country": "Japan"
 })
 ```
 
@@ -194,12 +213,14 @@ Or as a JSON string.
 engine.add_json("""
 {
   "id": "2",
-  "body": "Osaka is a large city in western Japan."
+  "body": "Osaka is a large city in western Japan.",
+  "category": "city",
+  "country": "Japan"
 }
 """)
 ```
 
-This is useful for NLP workflows where JSON and JSONL are commonly used as intermediate data formats.
+Any JSON key other than `id` and `body` is automatically registered as a keyword field.
 
 ---
 
@@ -209,7 +230,7 @@ This is useful for NLP workflows where JSON and JSONL are commonly used as inter
 results = engine.search("Kyoto")
 ```
 
-You can specify the maximum number of search results.
+You can specify the maximum number of results.
 
 ```python
 results = engine.search("Kyoto", limit=10)
@@ -221,6 +242,83 @@ Each result has the following attributes:
 r.id
 r.body
 r.score
+```
+
+---
+
+## Field Filtering
+
+Use the `filters` keyword argument to narrow results by exact field values.
+Multiple filters are combined with AND.
+
+```python
+# Single filter
+results = engine.search("Kyoto", limit=10, filters={"category": "city"})
+
+# Multiple filters (AND)
+results = engine.search("Kyoto", limit=10,
+                        filters={"category": "city", "country": "Japan"})
+
+# Field-only filter (match_all + filter)
+results = engine.search("", limit=10, filters={"country": "Japan"})
+```
+
+---
+
+## Vector Search
+
+Pass `vector_dimension` to `SearchEngine` to enable KNN vector search.
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en", vector_dimension=2) as engine:
+    engine.add("1_East",  [1.0,  0.0])
+    engine.add("2_North", [0.0,  1.0])
+    engine.add("3_West",  [-1.0, 0.0])
+    engine.add("4_South", [-1.0, -1.0])
+    engine.commit()
+
+    results = engine.search([0.9, 0.1], limit=4)
+    for r in results:
+        print(r.id, r.score)
+```
+
+Results are returned in descending cosine-similarity order.
+
+---
+
+## Vector Search with Field Filters
+
+Attach fields when adding vectors, then pass `filters` at search time.
+The filter is applied **inside** the KNN query (not as post-processing), so the top-k
+results are taken from the matching subset only.
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en", vector_dimension=2) as engine:
+    engine.add("1_tech_East",   [ 1.0,  0.0], fields={"category": "tech",   "country": "Japan"})
+    engine.add("2_tech_North",  [ 0.0,  1.0], fields={"category": "tech",   "country": "Japan"})
+    engine.add("3_travel_East", [ 0.9,  0.2], fields={"category": "travel", "country": "Japan"})
+    engine.add("4_travel_West", [-1.0,  0.0], fields={"category": "travel", "country": "France"})
+    engine.add("5_tech_NE",     [ 0.7,  0.7], fields={"category": "tech",   "country": "USA"})
+    engine.commit()
+
+    query_vector = [0.9, 0.1]
+
+    # Without filter: all documents ranked by similarity
+    results = engine.search(query_vector, limit=10)
+
+    # With filter: only "tech" documents, ranked by similarity
+    results = engine.search(query_vector, limit=10, filters={"category": "tech"})
+
+    # Multiple filters (AND)
+    results = engine.search(query_vector, limit=10,
+                            filters={"category": "tech", "country": "Japan"})
+
+    for r in results:
+        print(r.id, r.score)
 ```
 
 ---
@@ -424,6 +522,9 @@ Current focus:
 - English search
 - JSON document input
 - In-memory indexing
+- Field filtering (exact-match keyword filters, AND conditions)
+- Vector search (KNN)
+- Vector search with field filters
 
 APIs may change in future versions.
 
@@ -433,11 +534,12 @@ APIs may change in future versions.
 
 Planned or considered features:
 
-- PyPI release
+- ~~PyPI release~~ ✓
+- ~~Vector search~~ ✓
+- ~~Field filtering~~ ✓
 - Improved Google Colab support
-- Vector search
 - Aggregation
-- JSON Query DSL
+- JSON Query DSL (`search_json`)
 - OpenSearch-compatible API
 
 ---
@@ -459,7 +561,7 @@ nlp4j_local_search
 Current version:
 
 ```text
-0.1.0
+0.3.0
 ```
 
 ---

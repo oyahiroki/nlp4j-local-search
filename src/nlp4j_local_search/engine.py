@@ -1,10 +1,44 @@
 # SearchEngine クラス
 import json
+from collections.abc import Mapping
 from typing import Any, Iterable, Optional, Sequence, Union
+
+from jpype import JArray, JFloat
 
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
 from .result import SearchResult
+
+# フィールド絞り込み用の型エイリアス
+FilterMap = Mapping[str, str]
+
+# add()/search() の fields/filters に使用できない予約済みフィールド名
+_RESERVED_FIELDS = frozenset({"id", "body", "vector"})
+
+
+def _to_java_string_map(values: Optional[FilterMap], *, argument_name: str):
+    """Python の dict を Java の HashMap<String, String> へ変換する。
+
+    None または空の場合は None を返す。
+    """
+    if not values:
+        return None
+
+    from java.util import HashMap  # noqa: PLC0415 (遅延インポート: JVM 起動後に呼ばれる)
+
+    java_map = HashMap()
+    for field_name, field_value in values.items():
+        if not isinstance(field_name, str) or not field_name:
+            raise InvalidDocumentError(
+                f"{argument_name} field names must be non-empty strings"
+            )
+        if not isinstance(field_value, str):
+            raise InvalidDocumentError(
+                f"{argument_name}[{field_name!r}] must be a string"
+            )
+        java_map.put(field_name, field_value)
+
+    return java_map
 
 
 class SearchEngine:
@@ -40,40 +74,85 @@ class SearchEngine:
     def add(
         self,
         id_or_doc: Union[str, dict[str, Any]],
-        body: Optional[Union[str, Sequence[float]]] = None
+        body: Optional[Union[str, Sequence[float]]] = None,
+        *,
+        fields: Optional[FilterMap] = None,
     ) -> None:
+        """ドキュメントをインデックスへ追加する。
+
+        テキスト検索:
+            add("1", "本文テキスト")
+            add("1", "本文テキスト", fields={"category": "city"})
+
+        ベクトル検索:
+            add("1", [1.0, 0.0])
+            add("1", [1.0, 0.0], fields={"category": "tech"})
+
+        dict 登録 (add_json へ委譲):
+            add({"id": "1", "body": "...", "category": "city"})
+        """
         self._ensure_open()
 
         try:
             if isinstance(id_or_doc, dict):
+                if fields:
+                    raise InvalidDocumentError(
+                        "fields cannot be used when id_or_doc is already a dict"
+                    )
                 self.add_json(id_or_doc)
                 return
 
             if body is None:
                 raise InvalidDocumentError("body is required when id is specified")
 
-            # ベクトル検索の場合
+            # fields の予約語チェック
+            if fields:
+                conflicts = _RESERVED_FIELDS.intersection(fields.keys())
+                if conflicts:
+                    raise InvalidDocumentError(
+                        f"reserved field names cannot be used: {sorted(conflicts)}"
+                    )
+
+            # ベクトル文書
             if isinstance(body, (list, tuple)):
                 if self.vector_dimension is None:
                     raise InvalidDocumentError(
                         "vector_dimension must be specified in __init__ to add vectors"
                     )
-                vector_array = [float(v) for v in body]
-                if len(vector_array) != self.vector_dimension:
+                vector_values = [float(v) for v in body]
+                if len(vector_values) != self.vector_dimension:
                     raise InvalidDocumentError(
-                        f"Vector dimension mismatch: expected {self.vector_dimension}, got {len(vector_array)}"
+                        f"Vector dimension mismatch: expected {self.vector_dimension}, "
+                        f"got {len(vector_values)}"
                     )
-                self._java.add(str(id_or_doc), vector_array)
+                # JPype のオーバーロード解決を安定させるため float[] を明示生成
+                vector_array = JArray(JFloat)(vector_values)
+                java_fields = _to_java_string_map(fields, argument_name="fields")
+
+                if java_fields is None:
+                    self._java.add(str(id_or_doc), vector_array)
+                else:
+                    self._java.add(str(id_or_doc), vector_array, java_fields)
+
+            # テキスト文書
             else:
-                # テキスト検索の場合
-                self._java.add(str(id_or_doc), str(body))
+                if fields:
+                    # add_json 経由で追加フィールドをまとめて登録する
+                    document = {
+                        "id": str(id_or_doc),
+                        "body": str(body),
+                        **dict(fields),
+                    }
+                    self.add_json(document)
+                else:
+                    self._java.add(str(id_or_doc), str(body))
 
         except InvalidDocumentError:
             raise
         except Exception as e:
             raise JavaSearchError("Failed to add document") from e
 
-    def add_json(self, doc: str | dict[str, Any]) -> None:
+    def add_json(self, doc: Union[str, dict[str, Any]]) -> None:
         self._ensure_open()
 
         if isinstance(doc, dict):
@@ -103,28 +182,65 @@ class SearchEngine:
     def search(
         self,
         query: Union[str, Sequence[float]],
-        limit: int = 10
+        limit: int = 10,
+        *,
+        filters: Optional[FilterMap] = None,
     ) -> list[SearchResult]:
+        """インデックスを検索する。
+
+        テキスト検索:
+            search("京都", limit=10)
+            search("京都", limit=10, filters={"category": "city"})
+            search("", limit=10, filters={"country": "Japan"})  # match_all + フィールド絞り込み
+
+        ベクトル検索:
+            search([0.9, 0.1], limit=10)
+            search([0.9, 0.1], limit=10, filters={"category": "tech"})
+
+        filters は複数指定した場合、すべて AND 条件になります。
+        フィールド値は keyword 完全一致（term クエリ）です。
+        """
         self._ensure_open()
 
+        if limit < 1:
+            raise InvalidDocumentError("limit must be greater than 0")
+
         try:
-            # ベクトル検索の場合
+            java_filters = _to_java_string_map(filters, argument_name="filters")
+
+            # ベクトル検索
             if isinstance(query, (list, tuple)):
                 if self.vector_dimension is None:
                     raise InvalidDocumentError(
                         "vector_dimension must be specified in __init__ to search with vectors"
                     )
-                vector_array = [float(v) for v in query]
-                if len(vector_array) != self.vector_dimension:
+                vector_values = [float(v) for v in query]
+                if len(vector_values) != self.vector_dimension:
                     raise InvalidDocumentError(
-                        f"Vector dimension mismatch: expected {self.vector_dimension}, got {len(vector_array)}"
+                        f"Vector dimension mismatch: expected {self.vector_dimension}, "
+                        f"got {len(vector_values)}"
                     )
-                results = self._java.search(vector_array, int(limit))
+                vector_array = JArray(JFloat)(vector_values)
+
+                if java_filters is None:
+                    java_results = self._java.search(vector_array, int(limit))
+                else:
+                    java_results = self._java.search(vector_array, int(limit), java_filters)
+
+            # キーワード検索
+            elif isinstance(query, str):
+                if java_filters is None:
+                    java_results = self._java.search(query, int(limit))
+                else:
+                    java_results = self._java.search(query, int(limit), java_filters)
+
             else:
-                # テキスト検索の場合
-                results = self._java.search(str(query), int(limit))
-            
-            return [SearchResult.from_java(r) for r in results]
+                raise InvalidDocumentError(
+                    "query must be a string or a sequence of floats"
+                )
+
+            return [SearchResult.from_java(r) for r in java_results]
+
         except InvalidDocumentError:
             raise
         except Exception as e:

@@ -1,91 +1,99 @@
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-# Apache Lucene を利用したオンメモリ検索エンジン
-
-[English](README.md) | 日本語
-
-Elasticsearch、OpenSearch、Apache Solr の基盤技術である Apache Lucene を利用しています。
-
-サーバー構築や Docker は不要です。Python からすぐに検索を始められます。
+https://github.com/oyahiroki/nlp4j-local-search
 
 # nlp4j-local-search
 
-Python から簡単に利用できる、オンメモリのローカル検索エンジンです。
+[English](README.md) | 日本語
 
-内部的には Apache Lucene ベースの検索エンジンを利用し、日本語・英語などの全文検索を手軽に実行できます。
+**Elasticsearch、OpenSearch、Solr、Docker を使わずに、Apache Lucene を Python から利用できます。**
 
-サーバーの構築や Docker の起動は不要です。
+`nlp4j-local-search` は Python 向けの軽量オンメモリ全文検索ライブラリです。
+
+サーバーや Docker の構築なしに、Apache Lucene ベースの検索機能を Python から直接利用できます。
+
+このライブラリは以下のような用途に適しています。
+
+- 自然言語処理の実験
+- RAG のプロトタイピング
+- ローカル全文検索
+- Jupyter Notebook・Google Colab での実験
+- 小規模検索アプリケーション
+- 一時的な検索インデックスが必要なテストコード
+
+内部実装は Java と Apache Lucene を利用していますが、Python 利用者が Java を意識する必要はありません。
+
+---
+
+## なぜこのライブラリ？
+
+Elasticsearch・OpenSearch・Apache Solr はいずれも強力な検索エンジンであり、Apache Lucene を基盤としています。
+
+しかし、小規模な実験やローカルプロトタイプ、Notebook での作業では、サーバーを立ち上げるのは重すぎることがあります。
+
+`nlp4j-local-search` を使えば、Python プロセスの中に直接 Lucene ベースの検索インデックスを作成できます。
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です")
+    engine.add("3", "京都市には任天堂の本社があります")
+
+    engine.commit()
+
+    for r in engine.search("京都"):
+        print(r.id, r.body, r.score)
+```
+
+サーバー不要。Docker 不要。外部の検索エンジンプロセス不要。
+
+---
 
 ## 特徴
 
-* Python から簡単に利用可能
-* オンメモリ検索
-* 検索インデックスをディスクに保存しない
-* Elasticsearch / OpenSearch / Solr 不要
-* Docker 不要
-* 日本語検索対応
-* 英語検索対応
-* Google Colab 対応予定
-* Apache Lucene ベース
-* 小規模データの検索や NLP 実験に最適
+- Python ファーストな API
+- Apache Lucene ベースの全文検索
+- オンメモリローカル検索
+- Elasticsearch 不要
+- OpenSearch 不要
+- Solr 不要
+- Docker 不要
+- 日本語全文検索対応
+- 英語全文検索対応
+- JSON ドキュメント入力対応
+- **フィールド絞り込み** — キーワード完全一致（AND 条件）でのフィールドフィルター
+- **ベクトル検索（KNN）** — float ベクトルによる近傍検索
+- **フィールド付きベクトル検索** — フィールド絞り込みスコープ内での KNN 検索
+- NLP・RAG 実験に最適
 
-## 利用シーン
-
-* 自然言語処理の実験
-* Embedding モデルの評価
-* RAG のプロトタイピング
-* Jupyter Notebook
-* Google Colab
-* テストコードでの検索処理
-* ローカル検索アプリケーション
+---
 
 ## インストール
 
-> **注意**: 現在、PyPI への公開準備中です。それまでは GitHub リポジトリから直接インストールしてください。
-
-### GitHub リポジトリからのインストール
-
-以下のいずれかの方法でインストールできます:
-
-**方法1: pip で直接インストール**
-
 ```bash
-pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
+pip install nlp4j-local-search
 ```
 
-**方法2: リポジトリをクローンしてインストール**
+### 開発版のインストール
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/oyahiroki/nlp4j-local-search.git
 cd nlp4j-local-search
-
-# 開発モードでインストール
 pip install -e .
 ```
 
-### サンプルプログラムの実行
+---
 
-リポジトリに含まれるサンプルプログラムを実行する場合:
+## 動作要件
 
-```bash
-# リポジトリをクローン（まだの場合）
-git clone https://github.com/oyahiroki/nlp4j-local-search.git
-cd nlp4j-local-search
+- Python 3.8 以上
+- Java ランタイム環境（JRE 8 以上）
+- jpype1
 
-# 依存パッケージをインストール
-pip install -e .
-
-# サンプルプログラムを実行
-python example/example.py
-```
-
-実行結果の例:
-
-```
-2 京都は日本の都市です。 0.18059490621089935
-4 京都府は広いです 0.18059490621089935
-3 京都市には任天堂の本社があります 0.16212496161460876
-```
+---
 
 ## クイックスタート
 
@@ -104,18 +112,88 @@ results = engine.search("京都")
 
 for r in results:
     print(r.id, r.body, r.score)
+
+engine.close()
 ```
 
+コンテキストマネージャ（`with` 文）の使用を推奨します。
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です。")
+    engine.add("3", "京都市には任天堂の本社があります")
+    engine.add_json({"id": "4", "body": "京都府は広いです"})
+
+    engine.commit()
+
+    for r in engine.search("京都", limit=10):
+        print(r.id, r.body, r.score)
+```
+
+実行結果の例：
+
+```text
+2 京都は日本の都市です。 0.18059490621089935
+4 京都府は広いです 0.18059490621089935
+3 京都市には任天堂の本社があります 0.16212496161460876
+```
+
+---
+
+## ドキュメントの登録
+
+ID と本文テキストを指定してドキュメントを追加します。
+
+```python
+engine.add("1", "京都は日本の歴史的な都市です。")
+```
+
+フィルター検索用の追加フィールドを付けることもできます。
+
+```python
+engine.add("1", "京都は日本の歴史的な都市です。",
+           fields={"category": "city", "country": "Japan"})
+engine.add("2", "任天堂の本社は京都にあります。",
+           fields={"category": "company", "country": "Japan"})
+```
+
+`fields` の値は文字列のみ使用できます。フィールドはキーワードフィールド（アナライザーを通さない完全一致）として保存されます。
+`id`・`body`・`vector` は予約済みフィールド名のため使用できません。
+
+---
+
 ## JSON ドキュメントの登録
+
+Python の辞書として追加できます。
+
+```python
+engine.add_json({
+    "id": "1",
+    "body": "京都は日本の歴史的な都市です。",
+    "category": "city",
+    "country": "Japan"
+})
+```
+
+JSON 文字列としても追加できます。
 
 ```python
 engine.add_json("""
 {
-  "id": "1",
-  "body": "京都府は広いです"
+  "id": "2",
+  "body": "大阪は関西の大都市です。",
+  "category": "city",
+  "country": "Japan"
 }
 """)
 ```
+
+`id`・`body` 以外の JSON キーは自動的にキーワードフィールドとして登録されます。
+
+---
 
 ## 検索
 
@@ -123,213 +201,166 @@ engine.add_json("""
 results = engine.search("京都")
 ```
 
-件数を指定する場合
+件数を指定する場合：
 
 ```python
 results = engine.search("京都", limit=10)
 ```
 
+各結果は以下の属性を持ちます。
+
+```python
+r.id     # ドキュメント ID
+r.body   # 本文テキスト
+r.score  # 検索スコア
+```
+
+---
+
+## フィールド絞り込み
+
+`filters` キーワード引数で、フィールド値による絞り込みができます。
+複数指定した場合はすべて AND 条件になります。
+
+```python
+# 単一フィールドで絞り込み
+results = engine.search("京都", limit=10, filters={"category": "city"})
+
+# 複数フィールドで絞り込み（AND条件）
+results = engine.search("京都", limit=10,
+                        filters={"category": "city", "country": "Japan"})
+
+# クエリなし（match_all）+ フィールド絞り込み
+results = engine.search("", limit=10, filters={"country": "Japan"})
+```
+
+フィールド値は全文検索ではなく、キーワード完全一致（term クエリ）で評価されます。
+そのため、スコアは本文のキーワード一致度のみで決まります。
+
+### フル例
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add_json({"id": "1", "body": "京都は日本の歴史的な都市です",   "category": "city",    "country": "Japan"})
+    engine.add_json({"id": "2", "body": "任天堂の本社は京都にあります",   "category": "company", "country": "Japan"})
+    engine.add_json({"id": "3", "body": "東京は日本の首都です",           "category": "city",    "country": "Japan"})
+    engine.add_json({"id": "4", "body": "パリはフランスの首都です",       "category": "city",    "country": "France"})
+    engine.commit()
+
+    # "京都" かつ category=company → id=2 のみ
+    results = engine.search("京都", limit=10, filters={"category": "company"})
+    for r in results:
+        print(r.id, r.body, r.score)
+```
+
+---
+
+## ベクトル検索（KNN）
+
+`SearchEngine` に `vector_dimension` を指定すると KNN ベクトル検索が有効になります。
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja", vector_dimension=2) as engine:
+    engine.add("1_East",  [ 1.0,  0.0])
+    engine.add("2_North", [ 0.0,  1.0])
+    engine.add("3_West",  [-1.0,  0.0])
+    engine.add("4_South", [-1.0, -1.0])
+    engine.commit()
+
+    # クエリベクトルに近い順（コサイン類似度）で返る
+    results = engine.search([0.9, 0.1], limit=4)
+    for r in results:
+        print(r.id, r.score)
+```
+
+### Embedding ベクトルとの組み合わせ例
+
+```python
+from nlp4j_local_search import SearchEngine
+
+vector_dim = 768  # BERT など
+
+with SearchEngine("ja", vector_dimension=vector_dim) as engine:
+    engine.add("doc1", embedding_vector_1)
+    engine.add("doc2", embedding_vector_2)
+    engine.add("doc3", embedding_vector_3)
+    engine.commit()
+
+    results = engine.search(query_embedding_vector, limit=5)
+    for r in results:
+        print(r.id, r.score)
+```
+
+---
+
+## フィールド付きベクトル検索
+
+ベクトル登録時に `fields` を付け、検索時に `filters` を指定することで、
+フィールド条件を満たすドキュメントの中から上位 k 件を返します。
+
+フィルターはベクトル検索の後処理ではなく、KNN クエリの内部で適用されます。
+そのため、指定した `limit` 件の結果を正しく取得できます。
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja", vector_dimension=2) as engine:
+    engine.add("1_tech_East",   [ 1.0,  0.0], fields={"category": "tech",   "country": "Japan"})
+    engine.add("2_tech_North",  [ 0.0,  1.0], fields={"category": "tech",   "country": "Japan"})
+    engine.add("3_travel_East", [ 0.9,  0.2], fields={"category": "travel", "country": "Japan"})
+    engine.add("4_travel_West", [-1.0,  0.0], fields={"category": "travel", "country": "France"})
+    engine.add("5_tech_NE",     [ 0.7,  0.7], fields={"category": "tech",   "country": "USA"})
+    engine.commit()
+
+    query_vector = [0.9, 0.1]
+
+    # フィルターなし: 全ドキュメントを類似度順
+    results = engine.search(query_vector, limit=10)
+
+    # category=tech のみ: tech ドキュメントの中から類似度順
+    results = engine.search(query_vector, limit=10, filters={"category": "tech"})
+
+    # 複数フィールド（AND）
+    results = engine.search(query_vector, limit=10,
+                            filters={"category": "tech", "country": "Japan"})
+
+    for r in results:
+        print(r.id, r.score)
+```
+
+---
+
 ## 言語設定
 
-日本語
+日本語：
 
 ```python
 engine = SearchEngine("ja")
 ```
 
-英語
+英語：
 
 ```python
 engine = SearchEngine("en")
 ```
 
-## ベクトル検索
+---
 
-ベクトル検索機能を使用すると、数値ベクトルの類似度に基づいた検索が可能です。
+## 日本語検索の特性：単純な部分一致との違い
 
-### 基本的な使い方
+日本語の検索では、単純な文字列の部分一致を使うとノイズが発生することがあります。
 
-```python
-from nlp4j_local_search import SearchEngine
-
-# ベクトル次元数を指定して初期化（例: 2次元）
-with SearchEngine("ja", vector_dimension=2) as engine:
-    # ベクトルを追加
-    engine.add("1_East", [1.0, 0.0])    # 東
-    engine.add("2_North", [1.0, 1.0])   # 北東
-    engine.add("3_West", [-1.0, 0.0])   # 西
-    engine.add("4_South", [-1.0, -1.0]) # 南西
-    
-    engine.commit()
-    
-    # ベクトルで検索
-    results = engine.search([0.9, 0.1], limit=10)
-    
-    for r in results:
-        print(f"ID: {r.id}, Score: {r.score}")
-```
-
-### 使用例: Embedding ベクトルの検索
+例えば `京都` で部分一致検索をすると、`東京都` にも `京都` という文字が含まれるためヒットしてしまいます。
 
 ```python
-from nlp4j_local_search import SearchEngine
-
-# 例: 768次元のベクトル（BERT などの Embedding）
-vector_dim = 768
-
-with SearchEngine("ja", vector_dimension=vector_dim) as engine:
-    # ドキュメントの Embedding ベクトルを追加
-    engine.add("doc1", embedding_vector_1)  # embedding_vector_1 は長さ768のリスト
-    engine.add("doc2", embedding_vector_2)
-    engine.add("doc3", embedding_vector_3)
-    
-    engine.commit()
-    
-    # クエリの Embedding ベクトルで検索
-    results = engine.search(query_embedding_vector, limit=5)
-    
-    for r in results:
-        print(f"Document ID: {r.id}, Similarity Score: {r.score}")
+"京都" in "東京都"  # True
 ```
 
-### 注意事項
-
-- `vector_dimension` を指定した場合、テキスト検索は使用できません
-- すべてのベクトルは指定した次元数と一致する必要があります
-- ベクトルの要素は `float` 型として扱われます
-
-## Google Colab での利用
-
-Google Colab でも簡単に利用できます。
-
-### インストール
-
-Colab のセルで以下を実行:
-
-```python
-# GitHub リポジトリから直接インストール
-!pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
-```
-
-### 使用例（一括実行）
-
-```python
-from nlp4j_local_search import SearchEngine
-
-# 検索エンジンを初期化
-with SearchEngine("ja") as engine:
-    # ドキュメントを追加
-    engine.add("1", "東京都は日本の都道府県のひとつです")
-    engine.add("2", "京都は日本の都市です")
-    engine.add("3", "京都市には任天堂の本社があります")
-    engine.add_json({"id": "4", "body": "京都府は広いです"})
-    
-    # インデックスをコミット
-    engine.commit()
-    
-    # 検索を実行
-    results = engine.search("京都", limit=10)
-    
-    # 結果を表示
-    for r in results:
-        print(f"ID: {r.id}, Score: {r.score:.4f}")
-        print(f"Body: {r.body}")
-        print("-" * 50)
-```
-
-### インタラクティブな使用例（セル単位で実行）
-
-Google Colab では、各セルを個別に実行してインタラクティブに操作できます。
-
-**セル 1: ライブラリのインポートと初期化**
-
-```python
-from nlp4j_local_search import SearchEngine
-
-# 検索エンジンを初期化（日本語モード）
-engine = SearchEngine("ja")
-```
-
-**セル 2: ドキュメントの追加**
-
-```python
-# ドキュメントを1件ずつ追加
-engine.add("1", "東京都は日本の都道府県のひとつです")
-engine.add("2", "京都は日本の都市です")
-engine.add("3", "京都市には任天堂の本社があります")
-```
-
-**セル 3: JSON形式でドキュメントを追加**
-
-```python
-# JSON形式でも追加可能
-engine.add_json({"id": "4", "body": "京都府は広いです"})
-engine.add_json({"id": "5", "body": "大阪は関西の大都市です"})
-```
-
-**セル 4: インデックスのコミット**
-
-```python
-# 追加したドキュメントをインデックスに反映
-engine.commit()
-print("インデックスのコミットが完了しました")
-```
-
-**セル 5: 検索の実行**
-
-```python
-# 「京都」で検索
-results = engine.search("京都", limit=10)
-
-# 結果を表示
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
-```
-
-**セル 6: 別のキーワードで検索**
-
-```python
-# 「日本」で検索
-results = engine.search("日本", limit=5)
-
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
-```
-
-**セル 7: さらにドキュメントを追加して再検索**
-
-```python
-# 新しいドキュメントを追加
-engine.add("6", "奈良には東大寺があります")
-engine.add("7", "神戸は港町として有名です")
-engine.commit()
-
-# 再度検索
-results = engine.search("関西", limit=10)
-for r in results:
-    print(f"ID: {r.id}, Score: {r.score:.4f}")
-    print(f"Body: {r.body}")
-    print("-" * 50)
-```
-
-**セル 8: リソースのクリーンアップ**
-
-```python
-# 使用後はクローズ
-engine.close()
-print("検索エンジンをクローズしました")
-```
-
-## 日本語検索の例：単純な部分一致との違い
-
-
-日本語の検索では、単純な文字列の部分一致だけではノイズが増えることがあります。
-
-例えば、次のような文書があるとします。
+しかし、全文検索エンジンでは Analyzer によって語を分解してからインデックスするため、`東京都` と `京都` を別の語として扱えます。
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -343,36 +374,67 @@ with SearchEngine("ja") as engine:
 
     for r in engine.search("京都", limit=10):
         print(r.id, r.body, r.score)
-````
-
-単純な部分一致検索で `京都` を検索すると、`東京都` という文字列にも `京都` が含まれているため、次の文書もヒットしてしまう可能性があります。
-
-```text
-東京都は日本の都道府県のひとつです
 ```
 
-しかし、全文検索エンジンでは、検索対象の文章をそのまま文字列として扱うのではなく、Analyzer によって検索用の語に分解してからインデックスします。
+`SearchEngine("ja")` は日本語向け Analyzer を使うため、`東京都` が `京都` のノイズとしてヒットしにくくなります。
 
-`SearchEngine("ja")` では日本語向けの Analyzer を利用するため、`東京都` と `京都` を単純な文字列の部分一致として扱うのではなく、日本語の語として扱うことができます。
+---
 
-そのため、`京都` で検索したときに、`東京都` がノイズとしてヒットしにくくなります。
+## 英語検索の特性：語形の正規化
 
-これは、単純な `in` や `str.find()` による検索との大きな違いです。
+`SearchEngine("en")` では英語向け Analyzer を使います。
+
+`search`・`searches`・`searched`・`searching` などの語形変化をまとめてマッチさせることができます。
 
 ```python
-"京都" in "東京都"  # True
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en") as engine:
+    engine.add("1", "Developers are searching documents with a local search engine.")
+    engine.add("2", "A developer searched many documents yesterday.")
+    engine.add("3", "This tool searches local JSON documents.")
+
+    engine.commit()
+
+    for r in engine.search("search", limit=10):
+        print(r.id, r.body, r.score)
 ```
 
-一方で、全文検索では Analyzer による語の分解結果を使って検索するため、より検索エンジンらしい結果を得ることができます。
+---
 
-このような性質は、日本語の自然言語処理や検索アプリケーションを作るときに重要です。
+## Google Colab での利用
 
+```python
+!pip install git+https://github.com/oyahiroki/nlp4j-local-search.git
+```
 
-### 注意事項
+その後：
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("ja") as engine:
+    engine.add("1", "東京都は日本の都道府県のひとつです")
+    engine.add("2", "京都は日本の都市です")
+    engine.add("3", "京都市には任天堂の本社があります")
+    engine.add_json({"id": "4", "body": "京都府は広いです"})
+
+    engine.commit()
+
+    results = engine.search("京都", limit=10)
+    for r in results:
+        print(f"ID: {r.id}, Score: {r.score:.4f}")
+        print(f"Body: {r.body}")
+        print("-" * 50)
+```
+
+注意事項：
 
 - Google Colab には Java がプリインストールされているため、追加のセットアップは不要です
+- インデックスはオンメモリのため、セッションをリセットするとデータは失われます
 - 初回実行時に JVM の起動に数秒かかる場合があります
-- セッションをリセットすると、インデックスデータは失われます（オンメモリのため）
+
+---
 
 ## 設計思想
 
@@ -380,60 +442,121 @@ with SearchEngine("ja") as engine:
 
 本ライブラリはサーバー型検索エンジンではありません。
 
-以下のような環境構築は不要です。
+以下の環境構築は不要です。
 
-* Elasticsearch
-* OpenSearch
-* Solr
+- Elasticsearch
+- OpenSearch
+- Solr
+- Docker
 
-検索エンジンをローカルプロセス内で直接利用できます。
+検索エンジンは Python プロセスの内部で動作します。
 
-### オンメモリ
+### オンメモリインデックス
 
-デフォルトでは検索インデックスをメモリ上に構築します。
+デフォルトでは検索インデックスをメモリ上に構築します。ディスクへの永続化は行いません。
 
-検索インデックスをディスクへ永続化しません。
+以下の用途に適しています。
 
-そのため、
+- 一時的な実験
+- テストコード
+- Jupyter Notebook
+- Google Colab
+- PoC 開発
+- ローカル NLP ワークフロー
 
-* 一時的な実験
-* テストコード
-* Notebook
-* 機密データを扱う PoC
+### Python ファースト API
 
-などに適しています。
-
-### Python ファースト
-
-内部実装は Java を利用していますが、利用者は Java を意識する必要はありません。
+内部実装は Java と Apache Lucene を利用していますが、公開 API は Python 利用者向けに設計されています。
 
 ```python
 engine = SearchEngine("ja")
 ```
 
-だけで利用できます。
+これだけで Lucene ベースの検索を Python から利用できます。
+
+---
+
+## ユースケース
+
+### 自然言語処理の実験
+
+テキストデータや辞書データ、NLP の中間結果などから検索可能なインデックスをすばやく作成できます。
+
+### RAG のプロトタイピング
+
+本格的な RAG システムを構築する前に、小〜中規模データセットでローカルキーワード検索の挙動を確認できます。
+
+### Embedding 実験の検索ベースライン
+
+Embedding モデルを評価する際、ベクトル検索の結果と従来のキーワード検索の結果を比較するのに役立ちます。
+
+### テストコード
+
+インデックスがオンメモリのため、自動テスト内で検索インデックスを作成・破棄できます。
+
+---
+
+## 現在のステータス
+
+このプロジェクトは現在アーリー開発段階です。
+
+現在の対応機能：
+
+- Python からのシンプルなローカル全文検索
+- 日本語検索
+- 英語検索
+- JSON ドキュメント入力
+- オンメモリインデックス
+- フィールド絞り込み（キーワード完全一致・AND 条件）
+- ベクトル検索（KNN）
+- フィールド付きベクトル検索
+
+将来のバージョンで API が変更される可能性があります。
+
+---
 
 ## ロードマップ
 
-* [x] オンメモリ検索
-* [x] 日本語検索
-* [x] JSON ドキュメント登録
-* [x] Python パッケージ公開
-* [x] Google Colab 対応
-* [x] ベクトル検索
-* [ ] Aggregation
-* [ ] JSON Query DSL
-* [ ] OpenSearch 互換 API
+- ~~PyPI 公開~~ ✓
+- ~~ベクトル検索~~ ✓
+- ~~フィールド絞り込み~~ ✓
+- Google Colab サポートの改善
+- Aggregation
+- JSON Query DSL（`search_json`）
+- OpenSearch 互換 API
+
+---
+
+## プロジェクト情報
+
+パッケージ名：
+
+```text
+nlp4j-local-search
+```
+
+Python モジュール名：
+
+```python
+nlp4j_local_search
+```
+
+現在のバージョン：
+
+```text
+0.3.0
+```
+
+---
 
 ## ライセンス
 
 Apache License 2.0
 
+---
+
 ## 作者
 
 Hiroki Oya
 
-GitHub:
-https://github.com/oyahiroki
-
-
+GitHub: https://github.com/oyahiroki

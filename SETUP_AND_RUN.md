@@ -1,29 +1,30 @@
-# example_vector_search.py の実行準備
+# セットアップと実行ガイド
 
 ## 必要な環境
 
-1. **Python 3.8以上**
-2. **Java Runtime Environment (JRE)**
-   - JPype1がJavaを呼び出すために必要
-   - Java 8以上を推奨
+- **Python 3.8 以上**
+- **Java Runtime Environment (JRE 8 以上)**
+  - JPype1 が Java を呼び出すために必要
+- **jpype1** （pip で自動インストールされます）
+
+---
 
 ## セットアップ手順
 
-### 1. Javaのインストール確認
-
-コマンドプロンプトまたはPowerShellで以下を実行:
+### 1. Java のインストール確認
 
 ```powershell
 java -version
 ```
 
-Javaがインストールされていない場合は、以下からダウンロード:
-- https://www.oracle.com/java/technologies/downloads/
-- または OpenJDK: https://adoptium.net/
+Java がインストールされていない場合は以下からダウンロードしてください。
+
+- Oracle JDK: https://www.oracle.com/java/technologies/downloads/
+- OpenJDK: https://adoptium.net/
 
 ### 2. パッケージのインストール
 
-プロジェクトのルートディレクトリ（c:/Users/oyahi/git/nlp4j-local-search）で以下を実行:
+リポジトリのルートディレクトリで以下を実行します。
 
 #### 方法A: 開発モードでインストール（推奨）
 
@@ -31,33 +32,45 @@ Javaがインストールされていない場合は、以下からダウンロ�
 pip install -e .
 ```
 
-この方法では、コードの変更が即座に反映されます。
+コードの変更が即座に反映されます。
 
-#### 方法B: 通常のインストール
+#### 方法B: PyPI からインストール
 
 ```powershell
-pip install .
+pip install nlp4j-local-search
 ```
 
 ### 3. 依存パッケージの確認
 
-インストールが成功すると、以下のパッケージがインストールされます:
-- `jpype1>=1.4.0` (Javaとの連携用)
-
-確認方法:
 ```powershell
 pip list | Select-String jpype1
 ```
 
-## 実行方法
+---
 
-### example_vector_search.py の実行
+## サンプルの実行
+
+### example_001: キーワード検索
 
 ```powershell
-python example\example_vector_search.py
+python examples\example_001_keywordsearch.py
 ```
 
-### 期待される出力
+期待される出力:
+
+```
+2 京都は日本の都市です。 0.18059490621089935
+4 京都府は広いです 0.18059490621089935
+3 京都市には任天堂の本社があります 0.16212496161460876
+```
+
+### example_002: ベクトル検索
+
+```powershell
+python examples\example_002_vector_search.py
+```
+
+期待される出力:
 
 ```
 === テキスト検索の例（既存機能） ===
@@ -68,55 +81,101 @@ python example\example_vector_search.py
 
 === ベクトル検索の例（新機能） ===
 クエリベクトル: [0.9, 0.1]
-  1_East: body= (score: 0.xxxx)
-  2_North: body= (score: 0.xxxx)
-  3_West: body= (score: 0.xxxx)
-  4_South: body= (score: 0.xxxx)
+  1_East: body=None (score: 0.xxxx)
+  2_North: body=None (score: 0.xxxx)
+  4_South: body=None (score: 0.xxxx)
+  3_West: body=None (score: 0.xxxx)
 
 完了！
 ```
 
-## トラブルシューティング
+### example_003: フィールド検索
 
-### エラー: "No module named 'nlp4j_local_search'"
+フィールド値（`category`、`country` など）による完全一致絞り込みのサンプルです。
 
-**原因**: パッケージがインストールされていない
-
-**解決方法**:
 ```powershell
-pip install -e .
+python examples\example_003_field_search.py
 ```
 
-### エラー: "JVMNotFoundException" または Java関連のエラー
+期待される出力:
 
-**原因**: Javaがインストールされていない、またはパスが通っていない
-
-**解決方法**:
-1. Javaをインストール
-2. 環境変数 `JAVA_HOME` を設定
-3. `PATH` に `%JAVA_HOME%\bin` を追加
-
-### エラー: "python: コマンドが見つかりません"
-
-**原因**: Pythonがパスに含まれていない
-
-**解決方法**:
-- `py` コマンドを試す: `py example\example_vector_search.py`
-- または、Pythonのフルパスを指定
-
-## その他のサンプル実行
-
-### 既存のテキスト検索サンプル
-
-```powershell
-python example\example.py
+```
+=== Field search: category="city" ===
+  [1] Kyoto is a historic city in Japan.
+  [3] Tokyo is the capital city of Japan.
+  [4] Paris is the capital city of France.
+=== Field search: category="company" ===
+  [2] Nintendo is headquartered in Kyoto, Japan.
+  [5] Sony is a Japanese multinational company.
+...
 ```
 
-### テストコードの実行
+### example_004: キーワード検索 ＋ フィールド絞り込み
+
+全文検索とフィールド絞り込みを同時に行うサンプルです。
 
 ```powershell
+python examples\example_004_keyword_and_field_search.py
+```
+
+期待される出力:
+
+```
+=== Keyword + field: "Kyoto" + category="company" ===
+  [2] score=0.xxxx  Nintendo is headquartered in Kyoto, Japan.
+=== Keyword + field: "Japan" + category="city" ===
+  [1] score=0.xxxx  Kyoto is a historic city in Japan.
+  [3] score=0.xxxx  Tokyo is the capital city of Japan.
+...
+```
+
+### example_005: ベクトル検索 ＋ フィールド絞り込み
+
+ベクトル登録時に `fields` を付け、検索時に `filters` で絞り込むサンプルです。
+フィルターは KNN クエリの内部で適用されるため、絞り込み後の文書集合から正しく上位 k 件が取得されます。
+
+```powershell
+python examples\example_005_vector_and_field_search.py
+```
+
+期待される出力:
+
+```
+=== Vector search (no filter): queryVector=[0.9, 0.1] ===
+  [3_travel_East]  score=0.xxxx
+  [1_tech_East]    score=0.xxxx
+  ...
+=== Vector + field: queryVector=[0.9, 0.1] + category="tech" ===
+  [1_tech_East]    score=0.xxxx
+  [5_tech_NE]      score=0.xxxx
+  [2_tech_North]   score=0.xxxx
+...
+```
+
+---
+
+## テストの実行
+
+### すべてのテストを実行
+
+```powershell
+python -m pytest tests\ -v
+```
+
+### 個別に実行
+
+```powershell
+# 日本語テキスト検索 + ベクトル検索
 python tests\test_vector_search.py
+
+# 英語テキスト検索
+python tests\test_search_en.py
+
+# フィールド絞り込み（新機能）
+python tests\test_field_search.py
 ```
+
+---
 
 ## 開発環境での確認
 
@@ -133,8 +192,50 @@ pip uninstall nlp4j-local-search
 pip install -e .
 ```
 
+---
+
+## トラブルシューティング
+
+### エラー: `No module named 'nlp4j_local_search'`
+
+**原因**: パッケージがインストールされていない
+
+**解決方法**:
+
+```powershell
+pip install -e .
+```
+
+### エラー: `JVMNotFoundException` または Java 関連のエラー
+
+**原因**: Java がインストールされていない、またはパスが通っていない
+
+**解決方法**:
+
+1. Java をインストール
+2. 環境変数 `JAVA_HOME` を設定
+3. `PATH` に `%JAVA_HOME%\bin` を追加
+
+設定後、PowerShell を再起動して確認:
+
+```powershell
+java -version
+```
+
+### エラー: `python: コマンドが見つかりません`
+
+**原因**: Python がパスに含まれていない
+
+**解決方法**:
+
+```powershell
+py examples\example_001_keywordsearch.py
+```
+
+---
+
 ## 注意事項
 
-- 初回実行時、JVMの起動に数秒かかる場合があります
+- 初回実行時、JVM の起動に数秒かかる場合があります
 - オンメモリ検索のため、プログラム終了後はデータは保持されません
-- Windows環境では、PowerShellまたはコマンドプロンプトを使用してください
+- Windows 環境では PowerShell またはコマンドプロンプトを使用してください
