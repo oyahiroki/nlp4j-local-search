@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nlp4j-local-search"
-version = "0.3.0"
+version = "0.4.0"
 description = "Apache Lucene based in-memory local search engine for Python"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -22,7 +22,6 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",

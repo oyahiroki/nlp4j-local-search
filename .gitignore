@@ -219,3 +219,4 @@ __marimo__/
 /.venv-pypi-test
 /.venv-test
 .project
+/.bob

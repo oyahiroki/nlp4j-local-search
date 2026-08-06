@@ -41,7 +41,7 @@ Example:
 ```toml
 [project]
 name = "nlp4j-local-search"
-version = "0.3.0"
+version = "0.4.0"
 ```
 
 Important:
@@ -75,7 +75,7 @@ python -m build
 Expected output example:
 
 ```text
-Successfully built nlp4j_local_search-0.3.0.tar.gz and nlp4j_local_search-0.3.0-py3-none-any.whl
+Successfully built nlp4j_local_search-0.4.0.tar.gz and nlp4j_local_search-0.4.0-py3-none-any.whl
 ```
 
 The generated files are placed under `dist/`.
@@ -84,8 +84,8 @@ Example:
 
 ```text
 dist/
-  nlp4j_local_search-0.3.0.tar.gz
-  nlp4j_local_search-0.3.0-py3-none-any.whl
+  nlp4j_local_search-0.4.0.tar.gz
+  nlp4j_local_search-0.4.0-py3-none-any.whl
 ```
 
 ## Check the package
@@ -99,8 +99,8 @@ python -m twine check dist/*
 Expected output example:
 
 ```text
-Checking dist/nlp4j_local_search-0.3.0-py3-none-any.whl: PASSED
-Checking dist/nlp4j_local_search-0.3.0.tar.gz: PASSED
+Checking dist/nlp4j_local_search-0.4.0-py3-none-any.whl: PASSED
+Checking dist/nlp4j_local_search-0.4.0.tar.gz: PASSED
 ```
 
 ## Check package size
@@ -143,7 +143,7 @@ python -m venv .venv-release-test
 source .venv-release-test/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install dist/nlp4j_local_search-0.3.0-py3-none-any.whl
+python -m pip install dist/nlp4j_local_search-0.4.0-py3-none-any.whl
 ```
 
 Check that the package can be imported and basic search works.
@@ -222,7 +222,7 @@ Install the package from TestPyPI.
 python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --no-deps \
-  nlp4j-local-search==0.3.0
+  nlp4j-local-search==0.4.0
 ```
 
 Check import.
@@ -275,8 +275,15 @@ https://pypi.org/project/nlp4j-local-search/
 You can also check a specific version.
 
 ```text
-https://pypi.org/project/nlp4j-local-search/0.3.0/
+https://pypi.org/project/nlp4j-local-search/0.4.0/
 ```
+
+```bash
+python -m pip index versions nlp4j-local-search \
+  --no-cache-dir \
+  --index-url https://pypi.org/simple
+```
+
 
 ## Install from PyPI
 
@@ -287,7 +294,7 @@ python -m venv .venv-pypi-test
 source .venv-pypi-test/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install nlp4j-local-search==0.3.0
+python -m pip install nlp4j-local-search==0.4.0
 ```
 
 Check installation.
@@ -326,20 +333,20 @@ git add pyproject.toml \
         examples/example_004_keyword_and_field_search.py \
         examples/example_005_vector_and_field_search.py \
         tests/test_field_search.py
-git commit -m "Release v0.3.0"
+git commit -m "Release v0.4.0"
 ```
 
 Create a Git tag.
 
 ```bash
-git tag v0.3.0
+git tag v0.4.0
 git push origin main
-git push origin v0.3.0
+git push origin v0.4.0
 ```
 
 ## Full command example
 
-Replace `0.3.0` with the actual release version.
+Replace `0.4.0` with the actual release version.
 
 ```bash
 # Install build tools

@@ -1,4 +1,4 @@
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
 https://github.com/oyahiroki/nlp4j-local-search
@@ -70,6 +70,9 @@ No external search engine process.
 - **Field filtering** — filter results by exact-match field values (AND conditions)
 - **Vector search (KNN)** — nearest-neighbour search using float vectors
 - **Vector search with field filters** — KNN search scoped to a field-filtered subset
+- **MultiValued fields** — register JSON array fields; each element is indexed as an independent keyword value
+- **Aggregation** — terms aggregation (`aggregate()` / `aggregate_json()`) on MultiValued and single-value fields
+- **OpenSearch Query DSL** — `search_json()` and `search_response_json()` for complex queries including multi-value AND conditions
 - Useful for NLP and RAG experiments
 
 ---
@@ -92,7 +95,7 @@ pip install -e .
 
 ## Requirements
 
-- Python 3.8 or later
+- Python 3.9 or later
 - Java runtime environment
 - jpype1
 
@@ -239,9 +242,10 @@ results = engine.search("Kyoto", limit=10)
 Each result has the following attributes:
 
 ```python
-r.id
-r.body
-r.score
+r.id    # str
+r.body  # Optional[str]  — None when the document has no body text
+r.score # float
+r.data  # Optional[str]  — raw JSON string of the original document (add_json only)
 ```
 
 ---
@@ -261,6 +265,128 @@ results = engine.search("Kyoto", limit=10,
 
 # Field-only filter (match_all + filter)
 results = engine.search("", limit=10, filters={"country": "Japan"})
+```
+
+---
+
+## MultiValued Fields
+
+When a field value in `add_json()` is a JSON array, each element is indexed as an independent keyword value.
+One document can appear in multiple aggregation buckets.
+
+```python
+engine.add_json({"id": "1", "body": "Kyoto is a historic city.",
+                 "tags": ["city", "tourism", "Japan"]})
+engine.add_json({"id": "2", "body": "Nintendo is headquartered in Kyoto.",
+                 "tags": ["company", "Japan"]})
+```
+
+You can filter by any element of a MultiValued field using the standard `filters` argument:
+
+```python
+# Returns documents where tags contains "Japan"
+results = engine.search("", limit=10, filters={"tags": "Japan"})
+```
+
+---
+
+## Aggregation
+
+Use `aggregate()` to count documents per field value (terms aggregation).
+
+```python
+with SearchEngine("en") as engine:
+    engine.add_json({"id": "1", "body": "Kyoto is a historic city.",
+                     "tags": ["city", "tourism", "Japan"]})
+    engine.add_json({"id": "2", "body": "Nintendo is headquartered in Kyoto.",
+                     "tags": ["company", "Japan"]})
+    engine.add_json({"id": "3", "body": "Tokyo is the capital city of Japan.",
+                     "tags": ["city", "capital", "Japan"]})
+    engine.add_json({"id": "4", "body": "Paris is a beautiful city in France.",
+                     "tags": ["city", "tourism", "France"]})
+    engine.add_json({"id": "5", "body": "Sony is a Japanese company based in Tokyo.",
+                     "tags": ["company", "Japan"]})
+    engine.commit()
+
+    # All documents — count by tags
+    response = engine.aggregate("tags", size=10)
+    for bucket in response["aggregations"]["tags"]["buckets"]:
+        print(bucket["key"], bucket["doc_count"])
+    # Japan 4 / city 3 / tourism 2 / company 2 / capital 1 / France 1
+
+    # Pre-filter with full-text query before aggregating
+    response = engine.aggregate("tags", size=10, query="Kyoto")
+
+    # Limit result buckets
+    response = engine.aggregate("tags", size=3)
+```
+
+`aggregate()` parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `field` | `str` | Field to aggregate on |
+| `name` | `str` (optional) | Aggregation name (defaults to `field`) |
+| `size` | `int` (default `10`) | Maximum number of buckets to return |
+| `query` | `str` (optional) | Full-text query to pre-filter documents |
+| `filters` | `dict[str, str]` (optional) | Field filters to pre-filter documents |
+
+For direct JSON control, use the low-level `aggregate_json()`:
+
+```python
+response = engine.aggregate_json({
+    "name": "tags",
+    "field": "tags",
+    "size": 10,
+    "query": "Kyoto",
+})
+```
+
+---
+
+## OpenSearch Query DSL
+
+### `search_json()` — returns `list[SearchResult]`
+
+Pass an OpenSearch-compatible Query DSL and get back a list of `SearchResult` objects.
+
+```python
+results = engine.search_json({
+    "size": 10,
+    "query": {
+        "bool": {
+            "filter": [
+                {"term": {"tags": "Japan"}},
+                {"term": {"tags": "city"}},
+            ]
+        }
+    },
+})
+for r in results:
+    print(r.id, r.body)
+```
+
+### `search_response_json()` — returns the full OpenSearch response `dict`
+
+Use this when you need `hits.total`, `_source`, or want to combine hits and aggregations in one call.
+This is also the recommended way to apply **AND conditions on the same field** (not possible with the `filters` dict, which cannot have duplicate keys).
+
+```python
+response = engine.search_response_json({
+    "size": 10,
+    "query": {
+        "bool": {
+            "filter": [
+                {"term": {"tags": "Japan"}},
+                {"term": {"tags": "city"}},
+            ]
+        }
+    },
+})
+
+total = response["hits"]["total"]["value"]
+for hit in response["hits"]["hits"]:
+    print(hit["_source"]["id"], hit["_source"].get("body"))
 ```
 
 ---
@@ -520,11 +646,13 @@ Current focus:
 - Simple local full-text search from Python
 - Japanese search
 - English search
-- JSON document input
+- JSON document input (including MultiValued fields via JSON arrays)
 - In-memory indexing
 - Field filtering (exact-match keyword filters, AND conditions)
 - Vector search (KNN)
 - Vector search with field filters
+- Aggregation (`aggregate()` / `aggregate_json()`)
+- OpenSearch Query DSL (`search_json()` / `search_response_json()`)
 
 APIs may change in future versions.
 
@@ -537,10 +665,11 @@ Planned or considered features:
 - ~~PyPI release~~ ✓
 - ~~Vector search~~ ✓
 - ~~Field filtering~~ ✓
+- ~~MultiValued fields~~ ✓
+- ~~Aggregation~~ ✓
+- ~~OpenSearch Query DSL (`search_json` / `search_response_json`)~~ ✓
 - Improved Google Colab support
-- Aggregation
-- JSON Query DSL (`search_json`)
-- OpenSearch-compatible API
+- Persistent index (disk-based)
 
 ---
 
@@ -561,7 +690,7 @@ nlp4j_local_search
 Current version:
 
 ```text
-0.3.0
+0.4.0
 ```
 
 ---
