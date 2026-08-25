@@ -73,6 +73,7 @@ No external search engine process.
 - **MultiValued fields** — register JSON array fields; each element is indexed as an independent keyword value
 - **Aggregation** — terms aggregation (`aggregate()` / `aggregate_json()`) on MultiValued and single-value fields
 - **OpenSearch Query DSL** — `search_json()` and `search_response_json()` for complex queries including multi-value AND conditions
+- **`view()` inspection API** — browse index content at a glance; count mode and relative-rate mode with `sort_by()` / `filter()` chains
 - Useful for NLP and RAG experiments
 
 ---
@@ -341,6 +342,90 @@ response = engine.aggregate_json({
     "query": "Kyoto",
 })
 ```
+
+---
+
+## `view()` — Inspect Index Content
+
+`view()` is an inspection API for browsing what is stored in the index.
+
+**Count mode** — no Lucene query:
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en", auto_analyze=False) as engine:
+    engine.add_json({"id": "1", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
+    engine.add_json({"id": "2", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
+    engine.add_json({"id": "3", "body": "...", "maker": "Nissan", "category": "electrical", "part": "battery"})
+    engine.add_json({"id": "4", "body": "...", "maker": "Toyota", "category": "brake",      "part": "brake"})
+    engine.add_json({"id": "5", "body": "...", "maker": "Toyota", "category": "electrical", "part": "battery"})
+    engine.add_json({"id": "6", "body": "...", "maker": "Honda",  "category": "brake",      "part": "brake"})
+    engine.commit()
+
+    # Overview — top 3 values per aggregatable field
+    print(engine.view())
+    # View: aggregatable fields
+    # Format: field | value (document count)
+    #
+    # maker    | Nissan (3), Toyota (2), Honda (1)
+    # category | brake (2), body (2), electrical (2)
+    # part     | brake (2), door mirror (2), battery (2)
+
+    # Single field — top 10 values in table form
+    print(engine.view("maker"))
+    # View: maker
+    # Values are ordered by document count.
+    #
+    # Rank  Value                   Count
+    # ----  -------------------- --------
+    #    1  Nissan                      3
+    #    2  Toyota                      2
+    #    3  Honda                       1
+```
+
+**Relative-rate mode** — with a Lucene query (keyword fields supported):
+
+```python
+    # How distinctive is each part value for Nissan documents vs. all documents?
+    print(engine.view("part", "maker:Nissan"))
+    # View: part
+    # Lucene query: maker:Nissan
+    # Matched documents: 3 / 6
+    # Values are ordered by relative rate.
+    #
+    # Rank  Value                   Count  All Count  Relative Rate
+    # ----  -------------------- -------- ---------- --------------
+    #    1  door mirror                 2          2          2.00x
+    #    2  battery                     1          2          1.00x
+```
+
+**Chain methods** — `sort_by()` and `filter()` return a new `ViewResult` without mutating the original:
+
+```python
+    result = engine.view("part", "maker:Nissan")
+
+    # Keep only buckets with relative_rate >= 1.5
+    filtered = result.filter(min_relative_rate=1.5)
+
+    # Re-sort by count ascending
+    sorted_asc = result.sort_by("count", descending=False)
+
+    # Chain: filter then sort
+    chained = result.filter(min_count=1).sort_by("relative_rate")
+```
+
+`view()` parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `field` | `str` (optional) | Field to inspect. Omit for overview of all aggregatable fields. |
+| `lucene_query` | `str` (optional) | Lucene query to pre-filter documents (keyword fields supported). Activates relative-rate mode. |
+| `size` | `int` (optional) | Number of buckets to display. Default: 3 (overview) or 10 (single field). |
+| `candidate_size` | `int` (default `1000`) | Number of top candidates used for relative-rate computation (relative-rate mode only). |
+
+The return value is a `ViewResult`. `print(result)` or evaluating it in Jupyter produces a formatted table.
+The underlying data is always intact: `result.fields[0].buckets[0].key` returns the full, un-truncated value.
 
 ---
 
@@ -653,6 +738,8 @@ Current focus:
 - Vector search with field filters
 - Aggregation (`aggregate()` / `aggregate_json()`)
 - OpenSearch Query DSL (`search_json()` / `search_response_json()`)
+- `view()` inspection API (count mode and relative-rate mode)
+- `relative_rate()` / `relative_rate_lucene()` analytics
 
 APIs may change in future versions.
 
@@ -668,6 +755,7 @@ Planned or considered features:
 - ~~MultiValued fields~~ ✓
 - ~~Aggregation~~ ✓
 - ~~OpenSearch Query DSL (`search_json` / `search_response_json`)~~ ✓
+- ~~`view()` inspection API~~ ✓
 - Improved Google Colab support
 - Persistent index (disk-based)
 
@@ -690,7 +778,7 @@ nlp4j_local_search
 Current version:
 
 ```text
-0.4.0
+0.5.1
 ```
 
 ---

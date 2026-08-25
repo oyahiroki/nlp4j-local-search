@@ -1,13 +1,18 @@
 # SearchEngine クラス
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any, Iterable, Optional, Union
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from jpype import JArray, JFloat
 
+from .analytics import AnalyticsResult
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
 from .result import SearchResult
+from .view import ViewBucket, ViewField, ViewResult
+
+if TYPE_CHECKING:
+    from .embedding import EmbeddingProvider
 
 # フィールド絞り込み用の型エイリアス
 # 登録フィールド値: str または list[str]
@@ -93,28 +98,40 @@ class SearchEngine:
         self,
         lang: str = "ja",
         *,
+        auto_analyze: bool = True,
         vector_dimension: Optional[int] = None,
+        embedding: "Optional[EmbeddingProvider]" = None,
         classpath: Optional[Sequence[str]] = None,
         jvm_args: Optional[Sequence[str]] = None,
     ) -> None:
+        # Resolve vector_dimension from embedding if provided
+        if embedding is not None:
+            if vector_dimension is None:
+                vector_dimension = embedding.dimension
+            elif vector_dimension != embedding.dimension:
+                raise ValueError(
+                    "vector_dimension does not match embedding.dimension"
+                )
+
         ensure_jvm(classpath=classpath, jvm_args=jvm_args)
 
         try:
             from nlp4j.lucene import LocalSearch
-        except Exception as e:
-            raise JavaSearchError(
-                "Failed to import Java class: nlp4j.lucene.LocalSearch"
-            ) from e
 
-        try:
+            builder = LocalSearch.builder(lang)
+            builder = builder.autoAnalyze(bool(auto_analyze))
+
             if vector_dimension is not None:
-                self._java = LocalSearch(lang, int(vector_dimension))
-                self.vector_dimension = vector_dimension
-            else:
-                self._java = LocalSearch(lang)
-                self.vector_dimension = None
+                builder = builder.vectorDimension(int(vector_dimension))
+
+            self._java = builder.build()
             self.lang = lang
+            self.auto_analyze = auto_analyze
+            self.vector_dimension = vector_dimension
+            self.embedding: "Optional[EmbeddingProvider]" = embedding
+            self._analytics = None
             self._closed = False
+
         except Exception as e:
             raise JavaSearchError(f"Failed to create LocalSearch(lang={lang})") from e
 
@@ -405,6 +422,7 @@ class SearchEngine:
         name: Optional[str] = None,
         size: int = 10,
         query: Optional[str] = None,
+        lucene_query: Optional[str] = None,
         filters: Optional[FilterMap] = None,
     ) -> "dict[str, Any]":
         """terms aggregation を実行する Python 向け高レベル API。
@@ -417,17 +435,25 @@ class SearchEngine:
                 print(bucket["key"], bucket["doc_count"])
 
         Args:
-            field:   集計対象のフィールド名。
-            name:    集計名（省略時は field と同じ）。
-            size:    返すバケット数の上限。
-            query:   全文検索による事前絞り込みクエリ（省略可）。
-            filters: フィールド絞り込み条件（省略可）。
+            field:        集計対象のフィールド名。
+            name:         集計名（省略時は field と同じ）。
+            size:         返すバケット数の上限。
+            query:        全文検索による事前絞り込みクエリ（省略可）。
+            lucene_query: Lucene 構文クエリによる事前絞り込み（省略可）。
+                          full-text フィールド（text_en, text_ja など）を対象にする。
+                          例: "text_en:Kyoto AND text_en:historic"
+            filters:      フィールド絞り込み条件（省略可）。
         """
         if not isinstance(field, str) or not field:
             raise InvalidDocumentError("field must be a non-empty string")
 
         if size < 1:
             raise InvalidDocumentError("size must be greater than 0")
+
+        if query is not None and lucene_query is not None:
+            raise InvalidDocumentError(
+                "query and lucene_query cannot be used together"
+            )
 
         request: "dict[str, Any]" = {
             "name": name or field,
@@ -438,10 +464,294 @@ class SearchEngine:
         if query:
             request["query"] = query
 
+        if lucene_query:
+            request["lucene_query"] = lucene_query
+
         if filters:
             request["filters"] = dict(filters)
 
         return self.aggregate_json(request)
+
+    def fields(self) -> "list[str]":
+        """インデックスに登録されているすべてのフィールド名を返す。
+
+        例:
+            print(engine.fields())
+            # ['id', 'body', 'word.noun', 'word.verb', 'category', ...]
+        """
+        self._ensure_open()
+
+        try:
+            java_fields = self._java.getFields()
+            return [str(f) for f in java_fields]
+        except Exception as e:
+            raise JavaSearchError("Failed to get fields") from e
+
+    def aggregatable_fields(self) -> "list[str]":
+        """terms aggregation が可能なフィールド名の一覧を返す。
+
+        例:
+            print(engine.aggregatable_fields())
+            # ['word.noun', 'word.verb', 'category', ...]
+        """
+        self._ensure_open()
+
+        try:
+            java_fields = self._java.getAggregatableFields()
+            return [str(f) for f in java_fields]
+        except Exception as e:
+            raise JavaSearchError("Failed to get aggregatable fields") from e
+
+    def relative_rate_lucene(
+        self,
+        lucene_query: str,
+        field: str,
+        *,
+        candidate_size: int = 1000,
+    ) -> AnalyticsResult:
+        """Lucene クエリで絞り込んだ文書集合について relativeRate を返す。
+
+        keyword フィールド（maker, category など）も対象にできる。
+
+        例:
+            result = engine.relative_rate_lucene(
+                "maker:Nissan",
+                "part",
+                candidate_size=1000,
+            )
+            for bucket in result.buckets:
+                print(bucket.key, bucket.relative_rate)
+
+        Args:
+            lucene_query:   Lucene 構文クエリ（keyword フィールドも指定可）。
+            field:          集計対象フィールド名。
+            candidate_size: relativeRate 計算の候補数上限。
+        """
+        self._ensure_open()
+
+        if not lucene_query:
+            raise InvalidDocumentError("lucene_query must be a non-empty string")
+
+        if not field:
+            raise InvalidDocumentError("field must be a non-empty string")
+
+        if candidate_size < 1:
+            raise InvalidDocumentError("candidate_size must be greater than 0")
+
+        try:
+            analytics = self._get_analytics()
+            java_result = analytics.relativeRateLucene(
+                lucene_query,
+                field,
+                int(candidate_size),
+            )
+            return AnalyticsResult.from_java(java_result)
+
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError("Failed to execute relativeRateLucene") from e
+
+    def _view_field(
+        self,
+        field: str,
+        *,
+        size: int,
+        lucene_query: Optional[str],
+        candidate_size: int,
+    ) -> ViewField:
+        """単一フィールドの集計を実行して ViewField を返す内部ヘルパー。
+
+        lucene_query なし → aggregate() → count のみ
+        lucene_query あり → relative_rate_lucene() → count / all_count / relative_rate
+        """
+        if lucene_query is None:
+            response = self.aggregate(field, size=size)
+            agg_name = field
+            buckets_raw = (
+                response
+                .get("aggregations", {})
+                .get(agg_name, {})
+                .get("buckets", [])
+            )
+            return ViewField(
+                field=field,
+                buckets=[
+                    ViewBucket(
+                        key=b["key"],
+                        count=int(b["doc_count"]),
+                    )
+                    for b in buckets_raw
+                ],
+            )
+        else:
+            analytics_result = self.relative_rate_lucene(
+                lucene_query,
+                field,
+                candidate_size=candidate_size,
+            )
+            buckets = [
+                ViewBucket(
+                    key=b.key,
+                    count=b.count,
+                    all_count=b.all_count,
+                    relative_rate=b.relative_rate,
+                )
+                for b in analytics_result.buckets[:size]
+            ]
+            return ViewField(
+                field=field,
+                buckets=buckets,
+                count=analytics_result.count,
+                total_count=analytics_result.total_count,
+            )
+
+    def view(
+        self,
+        field: Optional[str] = None,
+        lucene_query: Optional[str] = None,
+        *,
+        size: Optional[int] = None,
+        candidate_size: int = 1000,
+    ) -> ViewResult:
+        """インデックスのデータをひと目で概観するための inspection API。
+
+        引数なし:
+            engine.view()
+            → aggregatable な全フィールドの count 上位3件。
+
+        フィールド指定:
+            engine.view("category")
+            → category フィールドの count 上位10件（縦型テーブル）。
+
+        Lucene クエリで絞り込み:
+            engine.view("part", "maker:Nissan")
+            → maker:Nissan 対象の part について relativeRate 上位10件。
+            engine.view(lucene_query="maker:Nissan")
+            → 全 aggregatable フィールドについて relativeRate 上位3件。
+
+        size / candidate_size 指定:
+            engine.view("part", "maker:Nissan", size=20, candidate_size=1000)
+            → 最大1000候補で統計計算し、上位20件を表示。
+
+        チェーン操作:
+            engine.view("part", "maker:Nissan") \\
+                .filter(min_relative_rate=1.5) \\
+                .sort_by("relative_rate")
+
+        戻り値は ViewResult。print() または repr() で整形表示される。
+        Jupyter / Colab では式として評価するだけでも表示される。
+        """
+        self._ensure_open()
+
+        if size is None:
+            size = 3 if field is None else 10
+
+        if size < 1:
+            raise InvalidDocumentError("size must be greater than 0")
+
+        if candidate_size < 1:
+            raise InvalidDocumentError("candidate_size must be greater than 0")
+
+        sort_key: str = "relative_rate" if lucene_query else "count"
+
+        if field is not None:
+            item = self._view_field(
+                field,
+                size=size,
+                lucene_query=lucene_query,
+                candidate_size=candidate_size,
+            )
+            return ViewResult(
+                fields=[item],
+                lucene_query=lucene_query,
+                single_field=True,
+                sort_key=sort_key,
+            )
+
+        # 全 aggregatable field を取得
+        items: "list[ViewField]" = []
+        for field_name in self.aggregatable_fields():
+            item = self._view_field(
+                field_name,
+                size=size,
+                lucene_query=lucene_query,
+                candidate_size=candidate_size,
+            )
+            if item.buckets:
+                items.append(item)
+
+        return ViewResult(
+            fields=items,
+            lucene_query=lucene_query,
+            sort_key=sort_key,
+        )
+
+    def relative_rate(
+        self,
+        query_field: str,
+        query_value: str,
+        field: str,
+        *,
+        size: int = 100,
+    ) -> AnalyticsResult:
+        """フィールド値で絞り込んだ文書集合について、特徴的な語のrelativeRateを返す。
+
+        例:
+            result = engine.relative_rate(
+                query_field="word.noun",
+                query_value="ニッサン",
+                field="word.noun",
+                size=100,
+            )
+            for bucket in result.buckets:
+                print(bucket.key, bucket.relative_rate)
+        """
+        self._ensure_open()
+
+        if not query_field:
+            raise InvalidDocumentError("query_field must be a non-empty string")
+
+        if query_value is None:
+            raise InvalidDocumentError("query_value must not be None")
+
+        if not field:
+            raise InvalidDocumentError("field must be a non-empty string")
+
+        if size < 1:
+            raise InvalidDocumentError("size must be greater than 0")
+
+        try:
+            analytics = self._get_analytics()
+
+            java_result = analytics.relativeRate(
+                query_field,
+                query_value,
+                field,
+                int(size),
+            )
+
+            return AnalyticsResult.from_java(java_result)
+
+        except InvalidDocumentError:
+            raise
+
+        except Exception as e:
+            raise JavaSearchError("Failed to execute text analytics") from e
+
+    def _get_analytics(self):
+        """LocalAnalytics を遅延生成して返す。"""
+        if self._analytics is not None:
+            return self._analytics
+
+        try:
+            from nlp4j.analytics import LocalAnalytics
+
+            self._analytics = LocalAnalytics(self._java)
+            return self._analytics
+
+        except Exception as e:
+            raise JavaSearchError("Failed to create LocalAnalytics") from e
 
     def close(self) -> None:
         if self._closed:

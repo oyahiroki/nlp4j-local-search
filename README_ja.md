@@ -67,6 +67,10 @@ with SearchEngine("ja") as engine:
 - **フィールド絞り込み** — キーワード完全一致（AND 条件）でのフィールドフィルター
 - **ベクトル検索（KNN）** — float ベクトルによる近傍検索
 - **フィールド付きベクトル検索** — フィールド絞り込みスコープ内での KNN 検索
+- **MultiValued フィールド** — JSON 配列フィールドを登録し、各要素を独立したキーワード値としてインデックス
+- **Aggregation** — `aggregate()` / `aggregate_json()` による terms aggregation
+- **OpenSearch Query DSL** — `search_json()` / `search_response_json()` による複雑なクエリ
+- **`view()` inspection API** — インデックスの中身をひと目で把握；count モードと relativeRate モード、`sort_by()` / `filter()` チェーン操作対応
 - NLP・RAG 実験に最適
 
 ---
@@ -402,6 +406,90 @@ with SearchEngine("en") as engine:
 
 ---
 
+## `view()` — インデックスの中身を概観する
+
+`view()` はインデックスに格納されたデータをひと目で把握するための inspection API です。
+
+**count モード** — Lucene クエリなし：
+
+```python
+from nlp4j_local_search import SearchEngine
+
+with SearchEngine("en", auto_analyze=False) as engine:
+    engine.add_json({"id": "1", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
+    engine.add_json({"id": "2", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
+    engine.add_json({"id": "3", "body": "...", "maker": "Nissan", "category": "electrical", "part": "battery"})
+    engine.add_json({"id": "4", "body": "...", "maker": "Toyota", "category": "brake",      "part": "brake"})
+    engine.add_json({"id": "5", "body": "...", "maker": "Toyota", "category": "electrical", "part": "battery"})
+    engine.add_json({"id": "6", "body": "...", "maker": "Honda",  "category": "brake",      "part": "brake"})
+    engine.commit()
+
+    # 全 aggregatable フィールドの上位3件を一覧表示
+    print(engine.view())
+    # View: aggregatable fields
+    # Format: field | value (document count)
+    #
+    # maker    | Nissan (3), Toyota (2), Honda (1)
+    # category | brake (2), body (2), electrical (2)
+    # part     | brake (2), door mirror (2), battery (2)
+
+    # 単一フィールドを件数降順で表示
+    print(engine.view("maker"))
+    # View: maker
+    # Values are ordered by document count.
+    #
+    # Rank  Value                   Count
+    # ----  -------------------- --------
+    #    1  Nissan                      3
+    #    2  Toyota                      2
+    #    3  Honda                       1
+```
+
+**relativeRate モード** — Lucene クエリあり（keyword フィールドにも対応）：
+
+```python
+    # Nissan ドキュメント内での part の分布を全体と比較
+    print(engine.view("part", "maker:Nissan"))
+    # View: part
+    # Lucene query: maker:Nissan
+    # Matched documents: 3 / 6
+    # Values are ordered by relative rate.
+    #
+    # Rank  Value                   Count  All Count  Relative Rate
+    # ----  -------------------- -------- ---------- --------------
+    #    1  door mirror                 2          2          2.00x
+    #    2  battery                     1          2          1.00x
+```
+
+**チェーン操作** — `sort_by()` / `filter()` は元のオブジェクトを変更せず新しい `ViewResult` を返す：
+
+```python
+    result = engine.view("part", "maker:Nissan")
+
+    # relative_rate >= 1.5 の bucket のみ残す
+    filtered = result.filter(min_relative_rate=1.5)
+
+    # count 昇順で並べ替え
+    sorted_asc = result.sort_by("count", descending=False)
+
+    # チェーン: filter → sort_by
+    chained = result.filter(min_count=1).sort_by("relative_rate")
+```
+
+`view()` の引数：
+
+| 引数 | 型 | 説明 |
+|---|---|---|
+| `field` | `str`（省略可） | 集計対象フィールド。省略すると全 aggregatable フィールドの概観。 |
+| `lucene_query` | `str`（省略可） | Lucene クエリ（keyword フィールドも指定可）。指定すると relativeRate モードになる。 |
+| `size` | `int`（省略可） | 表示するバケット数。デフォルト：概観=3、単一フィールド=10。 |
+| `candidate_size` | `int`（デフォルト `1000`） | relativeRate 計算の候補数上限（relativeRate モード専用）。 |
+
+戻り値は `ViewResult`。`print(result)` または Jupyter でセルに評価するだけで整形表示される。
+内部データは常に完全な値を保持：`result.fields[0].buckets[0].key` は切り詰めなしの完全な値を返す。
+
+---
+
 ## Google Colab での利用
 
 ```python
@@ -510,6 +598,11 @@ Embedding モデルを評価する際、ベクトル検索の結果と従来の�
 - フィールド絞り込み（キーワード完全一致・AND 条件）
 - ベクトル検索（KNN）
 - フィールド付きベクトル検索
+- MultiValued フィールド
+- Aggregation（`aggregate()` / `aggregate_json()`）
+- OpenSearch Query DSL（`search_json()` / `search_response_json()`）
+- `view()` inspection API（count モード / relativeRate モード）
+- `relative_rate()` / `relative_rate_lucene()` analytics
 
 将来のバージョンで API が変更される可能性があります。
 
@@ -520,10 +613,12 @@ Embedding モデルを評価する際、ベクトル検索の結果と従来の�
 - ~~PyPI 公開~~ ✓
 - ~~ベクトル検索~~ ✓
 - ~~フィールド絞り込み~~ ✓
+- ~~MultiValued フィールド~~ ✓
+- ~~Aggregation~~ ✓
+- ~~OpenSearch Query DSL（`search_json` / `search_response_json`）~~ ✓
+- ~~`view()` inspection API~~ ✓
 - Google Colab サポートの改善
-- Aggregation
-- JSON Query DSL（`search_json`）
-- OpenSearch 互換 API
+- ディスクへの永続化
 
 ---
 
@@ -544,7 +639,7 @@ nlp4j_local_search
 現在のバージョン：
 
 ```text
-0.3.0
+0.5.1
 ```
 
 ---

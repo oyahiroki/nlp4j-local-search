@@ -49,6 +49,22 @@ Important:
 * Once a version is uploaded to PyPI, the same version file cannot be overwritten.
 * If a release needs to be fixed, increment the version, for example from `0.2.0` to `0.2.1`.
 
+
+## Update README.md
+
+Before building a new release, update `README.md` to reflect the new version.
+
+Check at least the following items:
+
+* Update the current version number.
+* Update installation examples such as `pip install nlp4j-local-search==0.5.0`.
+* Update examples or feature descriptions if the release adds or changes APIs.
+* Check that the information shown on the PyPI project page will be up to date.
+
+If `README_ja.md` contains version-specific information, update it as well.
+
+The README should be updated before running `python -m build`, because the packaged metadata may use it as the project description shown on PyPI.
+
 ## Install build tools
 
 From the repository root:
