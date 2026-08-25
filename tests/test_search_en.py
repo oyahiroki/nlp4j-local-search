@@ -17,7 +17,7 @@ def test_text_search():
         search.add("4", "This document is about search engines")
         search.commit()
         
-        results = search.search("run", 10)
+        results = search.search("text_en:run", 10)
         print(f"number of results: {len(results)}")
         for i, result in enumerate(results):
             print(f"result[{i}].id: {result.id}")

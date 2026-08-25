@@ -64,7 +64,7 @@ with SearchEngine("en") as engine:
     # ------------------------------------------------------------------
     print()
     print('=== Full-text search: "cat" ===')
-    for r in engine.search("cat", limit=10):
+    for r in engine.search("cat", 10):
         print(f"  [{r.id}] {r.body}  (score={r.score:.4f})")
 
 # Expected output (excerpt):

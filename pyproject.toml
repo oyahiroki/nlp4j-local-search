@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nlp4j-local-search"
-version = "0.5.1"
+version = "0.5.3"
 description = "Apache Lucene based in-memory local search engine for Python"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -44,3 +44,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 nlp4j_local_search = ["jars/*.jar", "jars/**/*.jar"]
+
+[project.scripts]
+nlp4j-data = "nlp4j_local_search.cli.shell:main"

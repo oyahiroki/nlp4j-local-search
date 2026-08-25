@@ -1,7 +1,7 @@
 """
-新機能テスト:
-  - キーワード検索 + フィールド絞り込み (Example03, 04 相当)
-  - ベクトル検索 + フィールド絞り込み  (Example05 相当)
+テスト:
+  - キーワード検索 + フィールド絞り込み (Example03, 04 相当) → Lucene Query に統一
+  - ベクトル検索 + フィールド絞り込み  (Example05 相当) → search_vector()
   - テキスト add() への fields 引数
   - バリデーション
 """
@@ -15,7 +15,7 @@ from nlp4j_local_search.errors import InvalidDocumentError
 
 
 # ---------------------------------------------------------------------------
-# Example03 相当: フィールド検索のみ
+# Example03 相当: フィールド検索のみ → Lucene keyword field query
 # ---------------------------------------------------------------------------
 def test_field_search_only():
     print("=== フィールド検索のみ ===")
@@ -27,17 +27,17 @@ def test_field_search_only():
         engine.add_json({"id": "5", "body": "Sony is a Japanese company.",          "category": "company", "country": "Japan"})
         engine.commit()
 
-        results = engine.search("", limit=10, filters={"category": "city"})
+        results = engine.search("category:city", 10)
         ids = [r.id for r in results]
         print(f"  category=city: {ids}")
         assert set(ids) == {"1", "3", "4"}, f"Unexpected: {ids}"
 
-        results = engine.search("", limit=10, filters={"category": "company"})
+        results = engine.search("category:company", 10)
         ids = [r.id for r in results]
         print(f"  category=company: {ids}")
         assert set(ids) == {"2", "5"}, f"Unexpected: {ids}"
 
-        results = engine.search("", limit=10, filters={"country": "France"})
+        results = engine.search("country:France", 10)
         ids = [r.id for r in results]
         print(f"  country=France: {ids}")
         assert ids == ["4"], f"Unexpected: {ids}"
@@ -46,7 +46,7 @@ def test_field_search_only():
 
 
 # ---------------------------------------------------------------------------
-# Example04 相当: キーワード検索 + フィールド絞り込み
+# Example04 相当: キーワード検索 + フィールド絞り込み → Lucene AND
 # ---------------------------------------------------------------------------
 def test_keyword_and_field_search():
     print("=== キーワード + フィールド検索 ===")
@@ -59,31 +59,31 @@ def test_keyword_and_field_search():
         engine.commit()
 
         # "Kyoto" かつ category=company → id=2 のみ
-        results = engine.search("Kyoto", limit=10, filters={"category": "company"})
+        results = engine.search("text_en:Kyoto AND category:company", 10)
         ids = [r.id for r in results]
         print(f"  Kyoto + category=company: {ids}")
         assert ids == ["2"], f"Unexpected: {ids}"
 
         # "Japan" かつ category=city → id=1, 3
-        results = engine.search("Japan", limit=10, filters={"category": "city"})
+        results = engine.search("text_en:Japan AND category:city", 10)
         ids = [r.id for r in results]
         print(f"  Japan + category=city: {ids}")
         assert set(ids) == {"1", "3"}, f"Unexpected: {ids}"
 
         # "city" かつ category=city AND country=Japan → id=1, 3
-        results = engine.search("city", limit=10, filters={"category": "city", "country": "Japan"})
+        results = engine.search("text_en:city AND category:city AND country:Japan", 10)
         ids = [r.id for r in results]
         print(f"  city + category=city + country=Japan: {ids}")
         assert set(ids) == {"1", "3"}, f"Unexpected: {ids}"
 
-        # match_all + category=city + country=France → id=4
-        results = engine.search("", limit=10, filters={"category": "city", "country": "France"})
+        # match_all (category=city AND country=France) → id=4
+        results = engine.search("category:city AND country:France", 10)
         ids = [r.id for r in results]
-        print(f"  (match_all) + category=city + country=France: {ids}")
+        print(f"  category=city + country=France: {ids}")
         assert ids == ["4"], f"Unexpected: {ids}"
 
         # フィルターに一致なし
-        results = engine.search("Tokyo", limit=10, filters={"country": "France"})
+        results = engine.search("text_en:Tokyo AND country:France", 10)
         ids = [r.id for r in results]
         print(f"  Tokyo + country=France (0件): {ids}")
         assert ids == [], f"Unexpected: {ids}"
@@ -102,7 +102,7 @@ def test_add_with_fields_text():
         engine.add("3", "Paris is the capital city of France.", fields={"category": "city",    "country": "France"})
         engine.commit()
 
-        results = engine.search("Kyoto", limit=10, filters={"category": "city"})
+        results = engine.search("text_en:Kyoto AND category:city", 10)
         ids = [r.id for r in results]
         print(f"  Kyoto + category=city: {ids}")
         assert ids == ["1"], f"Unexpected: {ids}"
@@ -111,7 +111,7 @@ def test_add_with_fields_text():
 
 
 # ---------------------------------------------------------------------------
-# Example05 相当: ベクトル検索 + フィールド絞り込み
+# Example05 相当: ベクトル検索 + フィールド絞り込み → search_vector()
 # ---------------------------------------------------------------------------
 def test_vector_and_field_search():
     print("=== ベクトル + フィールド検索 ===")
@@ -127,32 +127,32 @@ def test_vector_and_field_search():
         query = [0.9, 0.1]
 
         # フィルターなし: 6件すべて
-        results = engine.search(query, limit=6)
+        results = engine.search_vector(query, limit=6)
         ids = [r.id for r in results]
         print(f"  フィルターなし: {ids}")
         assert len(ids) == 6, f"Unexpected count: {len(ids)}"
 
         # category=tech: 3件、かつ先頭は 1_tech_East
-        results = engine.search(query, limit=6, filters={"category": "tech"})
+        results = engine.search_vector(query, limit=6, filters={"category": "tech"})
         ids = [r.id for r in results]
         print(f"  category=tech: {ids}")
         assert len(ids) == 3, f"Unexpected count: {len(ids)}"
         assert ids[0] == "1_tech_East", f"Expected 1_tech_East first, got {ids[0]}"
 
         # category=travel: 3件
-        results = engine.search(query, limit=6, filters={"category": "travel"})
+        results = engine.search_vector(query, limit=6, filters={"category": "travel"})
         ids = [r.id for r in results]
         print(f"  category=travel: {ids}")
         assert len(ids) == 3, f"Unexpected count: {len(ids)}"
 
         # category=tech + country=Japan: 2件 (5_tech_NE は USA)
-        results = engine.search(query, limit=6, filters={"category": "tech", "country": "Japan"})
+        results = engine.search_vector(query, limit=6, filters={"category": "tech", "country": "Japan"})
         ids = [r.id for r in results]
         print(f"  category=tech + country=Japan: {ids}")
         assert set(ids) == {"1_tech_East", "2_tech_North"}, f"Unexpected: {ids}"
 
         # フィルターに一致なし
-        results = engine.search(query, limit=6, filters={"category": "tech", "country": "France"})
+        results = engine.search_vector(query, limit=6, filters={"category": "tech", "country": "France"})
         ids = [r.id for r in results]
         print(f"  category=tech + country=France (0件): {ids}")
         assert ids == [], f"Unexpected: {ids}"
@@ -208,7 +208,7 @@ def test_validation_limit():
         engine.add("1", "test")
         engine.commit()
         try:
-            engine.search("test", limit=0)
+            engine.search("test", 0)
             assert False, "Should have raised"
         except InvalidDocumentError as e:
             print(f"  期待通りのエラー: {e}")

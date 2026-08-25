@@ -778,7 +778,7 @@ nlp4j_local_search
 Current version:
 
 ```text
-0.5.1
+0.5.3
 ```
 
 ---

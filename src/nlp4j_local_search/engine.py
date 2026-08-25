@@ -13,6 +13,7 @@ from .view import ViewBucket, ViewField, ViewResult
 
 if TYPE_CHECKING:
     from .embedding import EmbeddingProvider
+    from .data import DataPipeline
 
 # フィールド絞り込み用の型エイリアス
 # 登録フィールド値: str または list[str]
@@ -252,72 +253,145 @@ class SearchEngine:
 
     def search(
         self,
-        query: Union[str, Sequence[float]],
+        query: str,
         limit: int = 10,
-        *,
-        filters: Optional[FilterMap] = None,
     ) -> "list[SearchResult]":
-        """インデックスを検索する。
+        """Lucene Query Syntax でインデックスを検索する。
 
-        テキスト検索:
-            search("京都", limit=10)
-            search("京都", limit=10, filters={"category": "city"})
-            search("", limit=10, filters={"country": "Japan"})  # match_all + フィールド絞り込み
+        Java の ``searchLucene(query, limit)`` を呼び出す。
+        Lucene のクエリ構文をそのまま使用できる正式 API。
 
-        ベクトル検索:
-            search([0.9, 0.1], limit=10)
-            search([0.9, 0.1], limit=10, filters={"category": "tech"})
+        テキストフィールドの内部名::
 
-        filters は複数指定した場合、すべて AND 条件になります。
-        フィールド値は keyword 完全一致（term クエリ）です。
-        MultiValued フィールド（JSON 配列）も単一値フィルターで絞り込めます。
-        同一フィールドに対する複数値 AND 条件は search_response_json() を使用してください。
+            "ja" エンジン → text_ja
+            "en" エンジン → text_en
+
+        クエリ例::
+
+            # bare term（デフォルトフィールドで検索）
+            engine.search("京都")
+            engine.search("Kyoto")
+
+            # フィールド指定
+            engine.search("text_en:Kyoto")
+            engine.search("text_ja:京都")
+
+            # AND / OR / NOT
+            engine.search("text_en:Kyoto AND text_en:historic")
+            engine.search("text_en:Kyoto OR text_en:Tokyo")
+            engine.search("category:city AND NOT country:Japan")
+
+            # keyword フィールド完全一致
+            engine.search("category:city")
+            engine.search("category:city AND country:Japan")
+
+            # ワイルドカード
+            engine.search("text_en:Kyo*")
+
+            # フレーズ検索
+            engine.search('text_en:"historic city"')
+
+            # 数値レンジ (スキーマに integer/double フィールドが必要)
+            engine.search("year_i:[2025 TO 2026]")
+
+        ベクトル検索は :meth:`search_vector` を使用してください。
+
+        Args:
+            query:  Lucene クエリ文字列。
+            limit:  返す件数の上限（1 以上）。
+
+        Returns:
+            :class:`~nlp4j_local_search.result.SearchResult` のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *limit* が 1 未満のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
         """
         self._ensure_open()
+
+        if not isinstance(query, str):
+            raise InvalidDocumentError("query must be a string")
 
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
         try:
-            java_filters = _to_java_string_map(filters, argument_name="filters")
-
-            # ベクトル検索
-            if isinstance(query, (list, tuple)):
-                if self.vector_dimension is None:
-                    raise InvalidDocumentError(
-                        "vector_dimension must be specified in __init__ to search with vectors"
-                    )
-                vector_values = [float(v) for v in query]
-                if len(vector_values) != self.vector_dimension:
-                    raise InvalidDocumentError(
-                        f"Vector dimension mismatch: expected {self.vector_dimension}, "
-                        f"got {len(vector_values)}"
-                    )
-                vector_array = JArray(JFloat)(vector_values)
-
-                if java_filters is None:
-                    java_results = self._java.search(vector_array, int(limit))
-                else:
-                    java_results = self._java.search(vector_array, int(limit), java_filters)
-
-            # キーワード検索
-            elif isinstance(query, str):
-                if java_filters is None:
-                    java_results = self._java.search(query, int(limit))
-                else:
-                    java_results = self._java.search(query, int(limit), java_filters)
-
-            else:
-                raise InvalidDocumentError(
-                    "query must be a string or a sequence of floats"
-                )
-
+            java_results = self._java.searchLucene(query, int(limit))
             return [SearchResult.from_java(r) for r in java_results]
 
         except InvalidDocumentError:
             raise
         except Exception as e:
             raise JavaSearchError("Failed to search") from e
+
+    def search_vector(
+        self,
+        vector: Sequence[float],
+        limit: int = 10,
+        *,
+        filters: Optional[FilterMap] = None,
+    ) -> "list[SearchResult]":
+        """ベクトル検索を実行する。
+
+        クエリベクトルとのコサイン類似度が高い順に結果を返す。
+
+        例::
+
+            # フィルターなし
+            engine.search_vector([0.9, 0.1], limit=10)
+
+            # keyword フィールドで絞り込み（AND 結合）
+            engine.search_vector([0.9, 0.1], limit=10, filters={"category": "tech"})
+            engine.search_vector([0.9, 0.1], limit=10,
+                                 filters={"category": "tech", "country": "Japan"})
+
+        Args:
+            vector:  クエリベクトル（float のシーケンス）。
+            limit:   返す件数の上限（1 以上）。
+            filters: keyword フィールドの絞り込み条件（省略可）。
+
+        Returns:
+            :class:`~nlp4j_local_search.result.SearchResult` のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *vector_dimension* 未設定・次元数不一致・*limit* < 1 のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if limit < 1:
+            raise InvalidDocumentError("limit must be greater than 0")
+
+        if self.vector_dimension is None:
+            raise InvalidDocumentError(
+                "vector_dimension must be specified in __init__ to search with vectors"
+            )
+
+        try:
+            vector_values = [float(v) for v in vector]
+            if len(vector_values) != self.vector_dimension:
+                raise InvalidDocumentError(
+                    f"Vector dimension mismatch: expected {self.vector_dimension}, "
+                    f"got {len(vector_values)}"
+                )
+            vector_array = JArray(JFloat)(vector_values)
+            java_filters = _to_java_string_map(filters, argument_name="filters")
+
+            if java_filters is None:
+                java_results = self._java.search(vector_array, int(limit))
+            else:
+                java_results = self._java.search(vector_array, int(limit), java_filters)
+
+            return [SearchResult.from_java(r) for r in java_results]
+
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError("Failed to search vectors") from e
 
     def search_json(
         self,
@@ -765,6 +839,24 @@ class SearchEngine:
     def _ensure_open(self) -> None:
         if self._closed:
             raise JavaSearchError("SearchEngine is already closed")
+
+    def data(self, path: str) -> "DataPipeline":
+        """Create a :class:`~nlp4j_local_search.data.DataPipeline` for *path*.
+
+        Supports JSONL files.  Fluent transforms can be chained before
+        calling :meth:`~nlp4j_local_search.data.DataPipeline.load`::
+
+            result = (
+                engine.data("test.jsonl")
+                      .remove("xxx")
+                      .rename("category", "category_s")
+                      .embedding("text_en")
+                      .save_as("out.jsonl")
+                      .load()
+            )
+        """
+        from .data import DataPipeline
+        return DataPipeline.from_jsonl(path, engine=self)
 
     def __enter__(self) -> "SearchEngine":
         return self

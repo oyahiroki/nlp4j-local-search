@@ -2,11 +2,11 @@
 #
 # キーワード検索 ＋ フィールド絞り込みの例
 #
-# search(query, limit, filters=...) で全文検索とフィールド絞り込みを同時に行う例です。
+# search() に Lucene Query 構文で全文検索とフィールド絞り込みを同時に行う例です。
 #
-# - query が空文字列の場合は match_all（全件）として扱われます
-# - filters に複数フィールドを指定した場合は AND 条件になります
-# - フィールドのスコアへの影響はありません（スコアはキーワード一致度のみ）
+# テキストフィールド（"en" エンジン）: text_en:keyword
+# keyword フィールド:                  field:value
+# AND 結合:                            text_en:Kyoto AND category:company
 
 from nlp4j_local_search import SearchEngine
 
@@ -26,40 +26,40 @@ with SearchEngine("en") as engine:
     engine.commit()
 
     # --- キーワード + 単一フィールド絞り込み ---
-    print('=== Keyword + field: "Kyoto" + category="company" ===')
-    for r in engine.search("Kyoto", limit=10, filters={"category": "company"}):
+    print('=== text_en:Kyoto AND category:company ===')
+    for r in engine.search("text_en:Kyoto AND category:company", 10):
         print(f"  [{r.id}] score={r.score:.4f}  {r.body}")
 
-    print('=== Keyword + field: "Japan" + category="city" ===')
-    for r in engine.search("Japan", limit=10, filters={"category": "city"}):
+    print('=== text_en:Japan AND category:city ===')
+    for r in engine.search("text_en:Japan AND category:city", 10):
         print(f"  [{r.id}] score={r.score:.4f}  {r.body}")
 
     # --- キーワード + 複数フィールド絞り込み（AND） ---
-    print('=== Keyword + field: "city" + category="city" + country="Japan" ===')
-    for r in engine.search("city", limit=10, filters={"category": "city", "country": "Japan"}):
+    print('=== text_en:city AND category:city AND country:Japan ===')
+    for r in engine.search("text_en:city AND category:city AND country:Japan", 10):
         print(f"  [{r.id}] score={r.score:.4f}  {r.body}")
 
-    # --- クエリなし（match_all）+ フィールド絞り込み ---
-    print('=== match_all + category="city" + country="France" ===')
-    for r in engine.search("", limit=10, filters={"category": "city", "country": "France"}):
+    # --- フィールドのみ（全件一致相当）+ 複数フィールド絞り込み ---
+    print('=== category:city AND country:France ===')
+    for r in engine.search("category:city AND country:France", 10):
         print(f"  [{r.id}] score={r.score:.4f}  {r.body}")
 
     # --- フィルターに一致なし ---
-    print('=== Keyword + field: "Tokyo" + country="France" (no results) ===')
-    results = engine.search("Tokyo", limit=10, filters={"country": "France"})
+    print('=== text_en:Tokyo AND country:France (no results) ===')
+    results = engine.search("text_en:Tokyo AND country:France", 10)
     print(f"  hits: {len(results)}")
 
 # expected result
 
-# === Keyword + field: "Kyoto" + category="company" ===
+# === text_en:Kyoto AND category:company ===
 #   [2] score=0.xxxx  Nintendo is headquartered in Kyoto, Japan.
-# === Keyword + field: "Japan" + category="city" ===
+# === text_en:Japan AND category:city ===
 #   [1] score=0.xxxx  Kyoto is a historic city in Japan.
 #   [3] score=0.xxxx  Tokyo is the capital city of Japan.
-# === Keyword + field: "city" + category="city" + country="Japan" ===
+# === text_en:city AND category:city AND country:Japan ===
 #   [1] score=0.xxxx  Kyoto is a historic city in Japan.
 #   [3] score=0.xxxx  Tokyo is the capital city of Japan.
-# === match_all + category="city" + country="France" ===
+# === category:city AND country:France ===
 #   [4] score=0.xxxx  Paris is the capital city of France.
-# === Keyword + field: "Tokyo" + country="France" (no results) ===
+# === text_en:Tokyo AND country:France (no results) ===
 #   hits: 0

@@ -9,7 +9,7 @@ with SearchEngine("ja") as engine:
 
     engine.commit()
 
-    for r in engine.search("京都", limit=10):
+    for r in engine.search("京都", 10):
         print(r.id, r.body, r.score)
 
 # expected response

@@ -3,7 +3,7 @@
 # ベクトル検索 ＋ フィールド絞り込みの例
 #
 # add(id, vector, fields=...) でベクトルと追加フィールドを同一ドキュメントに登録し、
-# search(vector, limit, filters=...) でフィールドフィルター付きの KNN 検索を行う例です。
+# search_vector(vector, limit, filters=...) でフィールドフィルター付きの KNN 検索を行う例です。
 #
 # フィルターは後処理ではなく KNN クエリの内部で適用されます。
 # そのため、フィルター条件を満たすドキュメントの中から真の上位 k 件が返ります。
@@ -38,26 +38,26 @@ with SearchEngine("en", vector_dimension=2) as engine:
 
     # --- フィルターなし ---
     print(f"=== Vector search (no filter): queryVector={query_vector} ===")
-    for r in engine.search(query_vector, limit=6):
+    for r in engine.search_vector(query_vector, limit=6):
         print(f"  [{r.id}]  score={r.score:.4f}")
 
     # --- 単一フィールドフィルター ---
-    print(f'=== Vector + field: queryVector={query_vector} + category="tech" ===')
-    for r in engine.search(query_vector, limit=6, filters={"category": "tech"}):
+    print(f'=== search_vector + category:tech ===')
+    for r in engine.search_vector(query_vector, limit=6, filters={"category": "tech"}):
         print(f"  [{r.id}]  score={r.score:.4f}")
 
-    print(f'=== Vector + field: queryVector={query_vector} + category="travel" ===')
-    for r in engine.search(query_vector, limit=6, filters={"category": "travel"}):
+    print(f'=== search_vector + category:travel ===')
+    for r in engine.search_vector(query_vector, limit=6, filters={"category": "travel"}):
         print(f"  [{r.id}]  score={r.score:.4f}")
 
     # --- 複数フィールドフィルター（AND） ---
-    print(f'=== Vector + field: queryVector={query_vector} + category="tech" + country="Japan" ===')
-    for r in engine.search(query_vector, limit=6, filters={"category": "tech", "country": "Japan"}):
+    print(f'=== search_vector + category:tech + country:Japan ===')
+    for r in engine.search_vector(query_vector, limit=6, filters={"category": "tech", "country": "Japan"}):
         print(f"  [{r.id}]  score={r.score:.4f}")
 
     # --- フィルターに一致なし ---
-    print(f'=== Vector + field: queryVector={query_vector} + category="tech" + country="France" (no results) ===')
-    results = engine.search(query_vector, limit=6, filters={"category": "tech", "country": "France"})
+    print(f'=== search_vector + category:tech + country:France (no results) ===')
+    results = engine.search_vector(query_vector, limit=6, filters={"category": "tech", "country": "France"})
     print(f"  hits: {len(results)}")
 
 # expected result
@@ -69,16 +69,16 @@ with SearchEngine("en", vector_dimension=2) as engine:
 #   [6_travel_NE]    score=0.xxxx
 #   [2_tech_North]   score=0.xxxx
 #   [4_travel_West]  score=0.xxxx
-# === Vector + field: queryVector=[0.9, 0.1] + category="tech" ===
+# === search_vector + category:tech ===
 #   [1_tech_East]    score=0.xxxx   ← tech の中での最近傍
 #   [5_tech_NE]      score=0.xxxx
 #   [2_tech_North]   score=0.xxxx
-# === Vector + field: queryVector=[0.9, 0.1] + category="travel" ===
+# === search_vector + category:travel ===
 #   [3_travel_East]  score=0.xxxx
 #   [6_travel_NE]    score=0.xxxx
 #   [4_travel_West]  score=0.xxxx
-# === Vector + field: queryVector=[0.9, 0.1] + category="tech" + country="Japan" ===
+# === search_vector + category:tech + country:Japan ===
 #   [1_tech_East]    score=0.xxxx
 #   [2_tech_North]   score=0.xxxx
-# === Vector + field: queryVector=[0.9, 0.1] + category="tech" + country="France" (no results) ===
+# === search_vector + category:tech + country:France (no results) ===
 #   hits: 0

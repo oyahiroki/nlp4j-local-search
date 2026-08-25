@@ -1,6 +1,6 @@
 """
-新機能テスト:
-  - MultiValued フィールドの登録・フィルター検索  (Example07 相当)
+テスト:
+  - MultiValued フィールドの登録・フィルター検索  (Example07 相当) → Lucene Query に統一
   - Aggregation API  (Example06 相当)
   - search_json() による OpenSearch Query DSL 検索
   - search_response_json() による AND 条件検索
@@ -36,31 +36,31 @@ def _make_engine():
 
 
 # ---------------------------------------------------------------------------
-# MultiValued フィールド: 単一値フィルター検索
+# MultiValued フィールド: 単一値フィルター検索 → Lucene field query
 # ---------------------------------------------------------------------------
 def test_multivalued_filter_single():
     print("=== MultiValued: 単一値フィルター検索 ===")
     with _make_engine() as engine:
         # tags="Japan" → id=1,2,3,5 (4件)
-        results = engine.search("", limit=10, filters={"tags": "Japan"})
+        results = engine.search("tags:Japan", 10)
         ids = {r.id for r in results}
         print(f"  tags=Japan: {sorted(ids)}")
         assert ids == {"1", "2", "3", "5"}, f"Unexpected: {ids}"
 
         # tags="city" → id=1,3,4 (3件)
-        results = engine.search("", limit=10, filters={"tags": "city"})
+        results = engine.search("tags:city", 10)
         ids = {r.id for r in results}
         print(f"  tags=city: {sorted(ids)}")
         assert ids == {"1", "3", "4"}, f"Unexpected: {ids}"
 
         # tags="tourism" → id=1,4 (2件)
-        results = engine.search("", limit=10, filters={"tags": "tourism"})
+        results = engine.search("tags:tourism", 10)
         ids = {r.id for r in results}
         print(f"  tags=tourism: {sorted(ids)}")
         assert ids == {"1", "4"}, f"Unexpected: {ids}"
 
         # tags="sports" → 0件
-        results = engine.search("", limit=10, filters={"tags": "sports"})
+        results = engine.search("tags:sports", 10)
         ids = [r.id for r in results]
         print(f"  tags=sports (0件): {ids}")
         assert ids == [], f"Unexpected: {ids}"
@@ -69,13 +69,13 @@ def test_multivalued_filter_single():
 
 
 # ---------------------------------------------------------------------------
-# MultiValued フィールド + 全文検索
+# MultiValued フィールド + 全文検索 → Lucene AND
 # ---------------------------------------------------------------------------
 def test_multivalued_filter_with_keyword():
     print("=== MultiValued: キーワード + フィルター ===")
     with _make_engine() as engine:
         # "Kyoto" + tags="Japan" → id=1,2
-        results = engine.search("Kyoto", limit=10, filters={"tags": "Japan"})
+        results = engine.search("text_en:Kyoto AND tags:Japan", 10)
         ids = {r.id for r in results}
         print(f"  Kyoto + tags=Japan: {sorted(ids)}")
         assert ids == {"1", "2"}, f"Unexpected: {ids}"

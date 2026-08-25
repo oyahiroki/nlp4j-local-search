@@ -9,8 +9,11 @@ from .errors import (
 )
 from .result import SearchResult
 from .view import ViewBucket, ViewField, ViewResult
+from .data import DataPipeline, data
+from .data.errors import DataPipelineError, DataSourceError, DataWriteError, DataLoadError
 
 __all__ = [
+    # Search
     "SearchEngine",
     "SearchResult",
     "AnalyticsResult",
@@ -24,4 +27,11 @@ __all__ = [
     "ViewResult",
     "ViewField",
     "ViewBucket",
+    # Data pipeline
+    "data",
+    "DataPipeline",
+    "DataPipelineError",
+    "DataSourceError",
+    "DataWriteError",
+    "DataLoadError",
 ]

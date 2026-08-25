@@ -13,7 +13,7 @@ with SearchEngine("ja") as engine:
     engine.commit()
     
     print("クエリ: '京都'")
-    for r in engine.search("京都", limit=10):
+    for r in engine.search("京都", 10):
         print(f"  {r.id}: {r.body} (score: {r.score})")
 
 print("\n=== ベクトル検索の例（新機能） ===")
@@ -30,7 +30,7 @@ with SearchEngine("ja", vector_dimension=2) as engine:
     # 東寄りのベクトルで検索
     query_vector = [0.9, 0.1]
     print(f"クエリベクトル: {query_vector}")
-    for r in engine.search(query_vector, limit=10):
+    for r in engine.search_vector(query_vector, limit=10):
         print(f"  {r.id}: body={r.body} (score: {r.score})")
 
 print("\n完了！")
