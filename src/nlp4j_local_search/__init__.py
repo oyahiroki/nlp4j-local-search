@@ -7,7 +7,7 @@ from .errors import (
     JavaSearchError,
     InvalidDocumentError,
 )
-from .result import SearchResult
+from .result import QueryValidationResult, SearchResult
 from .view import ViewBucket, ViewField, ViewResult
 from .data import DataPipeline, data
 from .data.errors import DataPipelineError, DataSourceError, DataWriteError, DataLoadError
@@ -16,6 +16,7 @@ __all__ = [
     # Search
     "SearchEngine",
     "SearchResult",
+    "QueryValidationResult",
     "AnalyticsResult",
     "AnalyticsBucket",
     "EmbeddingProvider",

@@ -1,4 +1,4 @@
-"""Tests for SearchEngine.search_lucene()
+"""Tests for SearchEngine.search()
 
 Covers:
   - Basic keyword query (no field prefix)
@@ -10,6 +10,7 @@ Covers:
   - phrase search
   - NOT condition
   - limit parameter
+  - filters= keyword argument (non-scoring structured filter)
   - returns list[SearchResult] with correct types
   - input validation (limit < 1, non-string query)
   - closed engine raises JavaSearchError
@@ -18,7 +19,7 @@ Notes:
   - auto_analyze=False, lang="en" → full-text field is "text_en"
   - Lucene query uses text_en:Kyoto (not body:Kyoto)
   - Bare term "Kyoto" also works (searches default field)
-  - searchLucene has no filters overload; field conditions must be in the query string
+  - filters= maps to Java search(String, int, Map) overload
 """
 
 import sys
@@ -233,6 +234,31 @@ def test_non_string_query_raises(engine):
         engine.search(123, 10)  # type: ignore[arg-type]
 
 
+def test_empty_query_raises(engine):
+    """search('') raises InvalidDocumentError regardless of filters."""
+    with pytest.raises(InvalidDocumentError, match="non-empty"):
+        engine.search("")
+
+
+def test_empty_query_with_filters_also_raises(engine):
+    """search('', filters=...) also raises — Java rejects blank queries."""
+    with pytest.raises(InvalidDocumentError, match="non-empty"):
+        engine.search("", filters={"category": "city"})
+
+
+def test_whitespace_only_query_raises(engine):
+    """search('   ') raises InvalidDocumentError."""
+    with pytest.raises(InvalidDocumentError, match="non-empty"):
+        engine.search("   ")
+
+
+def test_filter_only_use_match_all(engine):
+    """Filter-only search should use '*:*' explicitly."""
+    results = engine.search("*:*", filters={"category": "city"})
+    ids = {r.id for r in results}
+    assert ids == {"1", "2", "3"}
+
+
 # ---------------------------------------------------------------------------
 # Closed engine
 # ---------------------------------------------------------------------------
@@ -244,3 +270,38 @@ def test_closed_engine_raises():
 
     with pytest.raises(JavaSearchError):
         eng.search("test", 10)
+
+
+# ---------------------------------------------------------------------------
+# filters= keyword argument
+# ---------------------------------------------------------------------------
+
+def test_filters_single_field(engine):
+    """filters={"category": "company"} restricts to company docs only."""
+    results = engine.search("Kyoto", filters={"category": "company"})
+    ids = {r.id for r in results}
+    # id=4 (Nintendo, Kyoto, company) should match; id=1 (city) should not
+    assert "4" in ids
+    assert "1" not in ids
+
+
+def test_filters_no_match(engine):
+    """filters that match no documents returns empty list."""
+    results = engine.search("Kyoto", filters={"category": "nonexistent"})
+    assert results == []
+
+
+def test_filters_combined_with_lucene_field(engine):
+    """filters combined with Lucene text query."""
+    results = engine.search("text_en:Japan", filters={"category": "city"})
+    ids = {r.id for r in results}
+    # Only Japan city docs: id=1 (Kyoto/city), id=2 (Tokyo/city)
+    assert ids.issubset({"1", "2", "3"})
+    assert "5" not in ids  # Sony (company) excluded by filter
+
+
+def test_filters_empty_dict_treated_as_no_filter(engine):
+    """Empty filters={} should behave like no filter."""
+    results_no_filter = engine.search("Kyoto", 10)
+    results_empty_filter = engine.search("Kyoto", 10, filters={})
+    assert {r.id for r in results_no_filter} == {r.id for r in results_empty_filter}

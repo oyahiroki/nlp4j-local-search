@@ -115,6 +115,32 @@ def test_mixed_usage_prevention():
     print("✓ 混在防止テスト成功\n")
 
 
+def test_search_vector_rejects_string():
+    """search_vector() に str を渡すと InvalidDocumentError になること。"""
+    with SearchEngine("ja", vector_dimension=2) as search:
+        search.add("1", [1.0, 0.0])
+        search.commit()
+        try:
+            search.search_vector("hello", 10)
+            assert False, "Should have raised InvalidDocumentError"
+        except InvalidDocumentError as e:
+            print(f"期待通りのエラー（str渡し）: {e}")
+            assert "sequence of numbers" in str(e).lower()
+
+
+def test_search_vector_rejects_bytes():
+    """search_vector() に bytes を渡すと InvalidDocumentError になること。"""
+    with SearchEngine("ja", vector_dimension=2) as search:
+        search.add("1", [1.0, 0.0])
+        search.commit()
+        try:
+            search.search_vector(b"\x00\x01", 10)
+            assert False, "Should have raised InvalidDocumentError"
+        except InvalidDocumentError as e:
+            print(f"期待通りのエラー（bytes渡し）: {e}")
+            assert "sequence of numbers" in str(e).lower()
+
+
 if __name__ == "__main__":
     try:
         test_text_search()

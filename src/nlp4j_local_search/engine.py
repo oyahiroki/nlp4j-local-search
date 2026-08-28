@@ -8,7 +8,7 @@ from jpype import JArray, JFloat
 from .analytics import AnalyticsResult
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
-from .result import SearchResult
+from .result import QueryValidationResult, SearchResult
 from .view import ViewBucket, ViewField, ViewResult
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ FilterMap = Mapping[str, str]
 # aggregate_json / search_json / search_response_json の引数型
 JsonRequest = Union[str, Mapping[str, Any]]
 
-# add()/search() の fields/filters に使用できない予約済みフィールド名
+# add() の fields に使用できない予約済みフィールド名
 _RESERVED_FIELDS = frozenset({"id", "body", "vector"})
 
 
@@ -255,10 +255,12 @@ class SearchEngine:
         self,
         query: str,
         limit: int = 10,
+        *,
+        filters: Optional[FilterMap] = None,
     ) -> "list[SearchResult]":
         """Lucene Query Syntax でインデックスを検索する。
 
-        Java の ``searchLucene(query, limit)`` を呼び出す。
+        Java の ``search(query, limit)`` を呼び出す。
         Lucene のクエリ構文をそのまま使用できる正式 API。
 
         テキストフィールドの内部名::
@@ -294,11 +296,15 @@ class SearchEngine:
             # 数値レンジ (スキーマに integer/double フィールドが必要)
             engine.search("year_i:[2025 TO 2026]")
 
+            # 構造化フィルターで非スコアリング絞り込み
+            engine.search("Kyoto", filters={"category": "company"})
+
         ベクトル検索は :meth:`search_vector` を使用してください。
 
         Args:
-            query:  Lucene クエリ文字列。
-            limit:  返す件数の上限（1 以上）。
+            query:    Lucene クエリ文字列。
+            limit:    返す件数の上限（1 以上）。
+            filters:  keyword フィールドの非スコアリング絞り込み条件（省略可）。
 
         Returns:
             :class:`~nlp4j_local_search.result.SearchResult` のリスト。
@@ -317,8 +323,19 @@ class SearchEngine:
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
+        if not query.strip():
+            raise InvalidDocumentError(
+                "query must be a non-empty Lucene query string"
+            )
+
         try:
-            java_results = self._java.searchLucene(query, int(limit))
+            java_filters = _to_java_string_map(filters, argument_name="filters")
+
+            if java_filters is None:
+                java_results = self._java.search(query, int(limit))
+            else:
+                java_results = self._java.search(query, int(limit), java_filters)
+
             return [SearchResult.from_java(r) for r in java_results]
 
         except InvalidDocumentError:
@@ -335,7 +352,7 @@ class SearchEngine:
     ) -> "list[SearchResult]":
         """ベクトル検索を実行する。
 
-        クエリベクトルとのコサイン類似度が高い順に結果を返す。
+        クエリベクトルとのベクトル類似度が高い順に結果を返す。
 
         例::
 
@@ -363,6 +380,11 @@ class SearchEngine:
         """
         self._ensure_open()
 
+        if isinstance(vector, (str, bytes)):
+            raise InvalidDocumentError(
+                "vector must be a sequence of numbers, not str or bytes"
+            )
+
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
@@ -382,9 +404,9 @@ class SearchEngine:
             java_filters = _to_java_string_map(filters, argument_name="filters")
 
             if java_filters is None:
-                java_results = self._java.search(vector_array, int(limit))
+                java_results = self._java.searchVector(vector_array, int(limit))
             else:
-                java_results = self._java.search(vector_array, int(limit), java_filters)
+                java_results = self._java.searchVector(vector_array, int(limit), java_filters)
 
             return [SearchResult.from_java(r) for r in java_results]
 
@@ -496,7 +518,6 @@ class SearchEngine:
         name: Optional[str] = None,
         size: int = 10,
         query: Optional[str] = None,
-        lucene_query: Optional[str] = None,
         filters: Optional[FilterMap] = None,
     ) -> "dict[str, Any]":
         """terms aggregation を実行する Python 向け高レベル API。
@@ -508,26 +529,26 @@ class SearchEngine:
             for bucket in response["aggregations"]["tags"]["buckets"]:
                 print(bucket["key"], bucket["doc_count"])
 
+            # Lucene Query による絞り込み
+            response = engine.aggregate(
+                "category",
+                query="text_en:Kyoto AND country:Japan",
+            )
+
         Args:
-            field:        集計対象のフィールド名。
-            name:         集計名（省略時は field と同じ）。
-            size:         返すバケット数の上限。
-            query:        全文検索による事前絞り込みクエリ（省略可）。
-            lucene_query: Lucene 構文クエリによる事前絞り込み（省略可）。
-                          full-text フィールド（text_en, text_ja など）を対象にする。
-                          例: "text_en:Kyoto AND text_en:historic"
-            filters:      フィールド絞り込み条件（省略可）。
+            field:    集計対象のフィールド名。
+            name:     集計名（省略時は field と同じ）。
+            size:     返すバケット数の上限。
+            query:    Lucene Query Syntax による事前絞り込みクエリ（省略可）。
+                      keyword フィールドも含む任意の Lucene 式を指定できる。
+                      例: "text_en:Kyoto AND country:Japan"
+            filters:  フィールド絞り込み条件（省略可）。
         """
         if not isinstance(field, str) or not field:
             raise InvalidDocumentError("field must be a non-empty string")
 
         if size < 1:
             raise InvalidDocumentError("size must be greater than 0")
-
-        if query is not None and lucene_query is not None:
-            raise InvalidDocumentError(
-                "query and lucene_query cannot be used together"
-            )
 
         request: "dict[str, Any]" = {
             "name": name or field,
@@ -538,13 +559,92 @@ class SearchEngine:
         if query:
             request["query"] = query
 
-        if lucene_query:
-            request["lucene_query"] = lucene_query
-
         if filters:
             request["filters"] = dict(filters)
 
         return self.aggregate_json(request)
+
+    def count(
+        self,
+        query: Optional[str] = None,
+        *,
+        filters: Optional[FilterMap] = None,
+    ) -> int:
+        """インデックス内の文書数を返す。
+
+        引数なしで全件数を返す。クエリ指定で絞り込んだ件数を返す。
+
+        例::
+
+            engine.count()
+            engine.count("category:company")
+            engine.count("text_en:Kyoto", filters={"category": "company"})
+
+        Args:
+            query:    Lucene クエリ文字列（省略可）。
+            filters:  keyword フィールドの非スコアリング絞り込み条件（省略可）。
+
+        Returns:
+            マッチした文書数（int）。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        try:
+            if query is None and not filters:
+                return int(self._java.count())
+
+            java_filters = _to_java_string_map(filters, argument_name="filters")
+
+            if java_filters is None:
+                return int(self._java.count(query))
+
+            return int(self._java.count(query, java_filters))
+
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError("Failed to count") from e
+
+    def validate_query(self, query: str) -> "QueryValidationResult":
+        """Lucene クエリ文字列の構文を検証する。
+
+        例::
+
+            result = engine.validate_query("category:company AND text_en:Kyoto")
+            if not result.valid:
+                print(result.message)
+
+        Args:
+            query: 検証する Lucene クエリ文字列。
+
+        Returns:
+            :class:`QueryValidationResult` — valid=True なら構文 OK。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if not isinstance(query, str):
+            raise InvalidDocumentError("query must be a string")
+
+        try:
+            java_result = self._java.validateQuery(query)
+            valid = bool(java_result.isValid())
+            msg = java_result.getMessage()
+            return QueryValidationResult(
+                valid=valid,
+                message=None if valid else (str(msg) if msg is not None else None),
+            )
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError("Failed to validate query") from e
 
     def fields(self) -> "list[str]":
         """インデックスに登録されているすべてのフィールド名を返す。

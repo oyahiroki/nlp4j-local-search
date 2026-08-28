@@ -1,4 +1,4 @@
-# SearchResult のPython側ラッパー
+# SearchResult / QueryValidationResult のPython側ラッパー
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -21,3 +21,15 @@ class SearchResult:
             score=float(obj.score),
             data=None if java_data is None else str(java_data),
         )
+
+
+@dataclass(frozen=True)
+class QueryValidationResult:
+    """Lucene クエリの構文検証結果。
+
+    Attributes:
+        valid:   構文が正しければ True。
+        message: 構文エラーのメッセージ（valid=True の場合は None）。
+    """
+    valid: bool
+    message: Optional[str] = None

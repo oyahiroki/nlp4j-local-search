@@ -428,13 +428,21 @@ def test_view_result_frozen():
 
 
 # ===========================================================================
-# aggregate() query/lucene_query mutual exclusion
+# aggregate() with Lucene query
 # ===========================================================================
 
-def test_aggregate_query_and_lucene_query_raises():
+def test_aggregate_with_lucene_query():
+    """aggregate(query=) now accepts Lucene Query Syntax."""
     with _build_engine() as engine:
-        with pytest.raises(InvalidDocumentError, match="cannot be used together"):
-            engine.aggregate("maker", query="Nissan", lucene_query="maker:Nissan")
+        response = engine.aggregate("maker", query="maker:Nissan")
+        buckets = (
+            response
+            .get("aggregations", {})
+            .get("maker", {})
+            .get("buckets", [])
+        )
+        assert len(buckets) == 1
+        assert buckets[0]["key"] == "Nissan"
 
 
 # ===========================================================================
