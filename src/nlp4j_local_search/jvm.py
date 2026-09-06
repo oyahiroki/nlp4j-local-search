@@ -8,7 +8,7 @@ from .errors import JVMStartError
 
 
 def default_jar_path() -> Path:
-    return Path(__file__).resolve().parent / "jars" / "0.6.0" / "nlp4j-localsearch.jar"
+    return Path(__file__).resolve().parent / "jars" / "1.6.0" / "nlp4j-localsearch.jar"
 
 
 def extract_jar_contents(jar_path: Path) -> tuple[list[str], str]:

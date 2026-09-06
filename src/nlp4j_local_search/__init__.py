@@ -1,4 +1,4 @@
-from .analytics import AnalyticsBucket, AnalyticsResult
+from .analytics import AnalyticsBucket, AnalyticsKeyword, AnalyticsQuery, AnalyticsResult
 from .embedding import EmbeddingProvider, Vector
 from .engine import SearchEngine
 from .errors import (
@@ -19,6 +19,8 @@ __all__ = [
     "QueryValidationResult",
     "AnalyticsResult",
     "AnalyticsBucket",
+    "AnalyticsKeyword",
+    "AnalyticsQuery",
     "EmbeddingProvider",
     "Vector",
     "SearchEngineError",

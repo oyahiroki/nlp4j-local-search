@@ -1,5 +1,8 @@
 # Build and Release Notes
 
+https://pypi.org/project/nlp4j-local-search/
+
+
 This document describes how to build and release `nlp4j-local-search` to PyPI.
 
 This is a maintainer-oriented memo for future releases.

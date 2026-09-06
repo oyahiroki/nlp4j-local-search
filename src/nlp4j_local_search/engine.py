@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from jpype import JArray, JFloat
 
-from .analytics import AnalyticsResult
+from .analytics import AnalyticsQuery, AnalyticsResult
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
 from .result import QueryValidationResult, SearchResult
@@ -699,14 +699,14 @@ class SearchEngine:
         Args:
             lucene_query:   Lucene 構文クエリ（keyword フィールドも指定可）。
             field:          集計対象フィールド名。
-            candidate_size: relativeRate 計算の候補数上限。
+            candidate_size: relativeRate 計算の候補数上限（表示件数ではなく計算対象の候補数）。
         """
         self._ensure_open()
 
-        if not lucene_query:
+        if not isinstance(lucene_query, str) or not lucene_query.strip():
             raise InvalidDocumentError("lucene_query must be a non-empty string")
 
-        if not field:
+        if not isinstance(field, str) or not field.strip():
             raise InvalidDocumentError("field must be a non-empty string")
 
         if candidate_size < 1:
@@ -867,7 +867,8 @@ class SearchEngine:
         query_value: str,
         field: str,
         *,
-        size: int = 100,
+        candidate_size: int = 100,
+        size: Optional[int] = None,
     ) -> AnalyticsResult:
         """フィールド値で絞り込んだ文書集合について、特徴的な語のrelativeRateを返す。
 
@@ -876,24 +877,36 @@ class SearchEngine:
                 query_field="word.noun",
                 query_value="ニッサン",
                 field="word.noun",
-                size=100,
+                candidate_size=100,
             )
             for bucket in result.buckets:
                 print(bucket.key, bucket.relative_rate)
+
+        Args:
+            query_field:    絞り込みに使うフィールド名（例: "maker"）。
+            query_value:    絞り込み値（スペースや ":" などの特殊文字も安全に扱える）。
+            field:          集計対象フィールド名。
+            candidate_size: relativeRate 計算対象となる aggregation 候補数。
+                            表示件数ではなく、計算対象の母集団サイズを指定する。
+            size:           後方互換用。指定時は candidate_size より優先される（非推奨）。
         """
         self._ensure_open()
 
-        if not query_field:
+        # backward compat: size= was the old name for candidate_size=
+        if size is not None:
+            candidate_size = size
+
+        if not isinstance(query_field, str) or not query_field.strip():
             raise InvalidDocumentError("query_field must be a non-empty string")
 
-        if query_value is None:
-            raise InvalidDocumentError("query_value must not be None")
+        if not isinstance(query_value, str):
+            raise InvalidDocumentError("query_value must be a string")
 
-        if not field:
+        if not isinstance(field, str) or not field.strip():
             raise InvalidDocumentError("field must be a non-empty string")
 
-        if size < 1:
-            raise InvalidDocumentError("size must be greater than 0")
+        if candidate_size < 1:
+            raise InvalidDocumentError("candidate_size must be greater than 0")
 
         try:
             analytics = self._get_analytics()
@@ -902,7 +915,7 @@ class SearchEngine:
                 query_field,
                 query_value,
                 field,
-                int(size),
+                int(candidate_size),
             )
 
             return AnalyticsResult.from_java(java_result)
@@ -912,6 +925,78 @@ class SearchEngine:
 
         except Exception as e:
             raise JavaSearchError("Failed to execute text analytics") from e
+
+    def relative_rates(
+        self,
+        query_field: str,
+        field: str,
+        *,
+        query_value_size: int = 100,
+        candidate_size: Optional[int] = None,
+    ) -> "dict[str, AnalyticsResult]":
+        """query_field の上位値それぞれについて relativeRate を一括取得する。
+
+        Java の ``LocalAnalytics.relativeRates()`` をラップする。
+
+        例:
+            results = engine.relative_rates(
+                "maker",
+                "word.noun",
+                query_value_size=100,
+                candidate_size=1000,
+            )
+            for maker, result in results.items():
+                print(maker)
+                for bucket in result.buckets[:10]:
+                    print(bucket.key, bucket.count, bucket.relative_rate)
+
+        Args:
+            query_field:      絞り込みフィールド名（例: "maker"）。
+            field:            集計対象フィールド名（例: "word.noun"）。
+            query_value_size: query_field の上位何件の値を対象にするか（候補数）。
+            candidate_size:   各値ごとの relativeRate 計算候補数。
+                              None のとき query_value_size と同じ値が使われる
+                              （Java の3引数版 ``relativeRates(queryField, field, size)`` と等価）。
+
+        Returns:
+            ``{query_value: AnalyticsResult}`` の順序付き dict（Java の LinkedHashMap 順を保持）。
+        """
+        self._ensure_open()
+
+        if not isinstance(query_field, str) or not query_field.strip():
+            raise InvalidDocumentError("query_field must be a non-empty string")
+
+        if not isinstance(field, str) or not field.strip():
+            raise InvalidDocumentError("field must be a non-empty string")
+
+        if query_value_size < 1:
+            raise InvalidDocumentError("query_value_size must be greater than 0")
+
+        _candidate_size = candidate_size if candidate_size is not None else query_value_size
+
+        if _candidate_size < 1:
+            raise InvalidDocumentError("candidate_size must be greater than 0")
+
+        try:
+            analytics = self._get_analytics()
+
+            java_results = analytics.relativeRates(
+                query_field,
+                field,
+                int(query_value_size),
+                int(_candidate_size),
+            )
+
+            return {
+                str(entry.getKey()): AnalyticsResult.from_java(entry.getValue())
+                for entry in java_results.entrySet()
+            }
+
+        except InvalidDocumentError:
+            raise
+
+        except Exception as e:
+            raise JavaSearchError("Failed to execute relativeRates") from e
 
     def _get_analytics(self):
         """LocalAnalytics を遅延生成して返す。"""
