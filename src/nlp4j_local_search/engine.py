@@ -99,12 +99,39 @@ class SearchEngine:
         self,
         lang: str = "ja",
         *,
-        auto_analyze: bool = True,
+        auto_analyze: bool = False,
         vector_dimension: Optional[int] = None,
         embedding: "Optional[EmbeddingProvider]" = None,
         classpath: Optional[Sequence[str]] = None,
         jvm_args: Optional[Sequence[str]] = None,
     ) -> None:
+        """Create a local Lucene search engine.
+
+        Args:
+            lang:
+                Language used for text indexing and search.
+
+            auto_analyze:
+                Enable NLP4J automatic text analysis when documents are added.
+                When False (default), documents are indexed for search only
+                and analysis fields such as ``word.noun`` and ``word.verb``
+                are not generated.
+
+                This option does not disable the Lucene Analyzer used for
+                normal full-text indexing and search.
+
+            vector_dimension:
+                Dimension of vector embedding if utilizing vector/hybrid search.
+
+            embedding:
+                Embedding provider used to generate vectors for queries and documents.
+
+            classpath:
+                Custom classpath for JVM initialization.
+
+            jvm_args:
+                Additional JVM arguments.
+        """
         # Resolve vector_dimension from embedding if provided
         if embedding is not None:
             if vector_dimension is None:
@@ -120,14 +147,14 @@ class SearchEngine:
             from nlp4j.lucene import LocalSearch
 
             builder = LocalSearch.builder(lang)
-            builder = builder.autoAnalyze(bool(auto_analyze))
+            self.auto_analyze = bool(auto_analyze)
+            builder = builder.autoAnalyze(self.auto_analyze)
 
             if vector_dimension is not None:
                 builder = builder.vectorDimension(int(vector_dimension))
 
             self._java = builder.build()
             self.lang = lang
-            self.auto_analyze = auto_analyze
             self.vector_dimension = vector_dimension
             self.embedding: "Optional[EmbeddingProvider]" = embedding
             self._analytics = None

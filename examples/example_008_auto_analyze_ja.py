@@ -2,7 +2,8 @@
 #
 # 日本語テキストの自動形態素解析 (auto_analyze)
 #
-# SearchEngine("ja") はデフォルトで auto_analyze=True。
+# SearchEngine("ja") はデフォルトで auto_analyze=False。
+# 形態素解析を有効にするには auto_analyze=True を指定する。
 # 自然文を add() するだけで Java 側が形態素解析し、
 #   word.noun  (名詞)
 #   word.verb  (動詞の基本形)
@@ -19,7 +20,7 @@ DOCUMENTS = [
     ("5", "トヨタ ドアから水が入った"),
 ]
 
-with SearchEngine("ja") as engine:
+with SearchEngine("ja", auto_analyze=True) as engine:
 
     for doc_id, body in DOCUMENTS:
         engine.add(doc_id, body)

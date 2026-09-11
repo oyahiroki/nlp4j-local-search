@@ -55,8 +55,8 @@ def test_auto_analyze_true_noun():
         )
 
 
-def test_auto_analyze_default_is_true():
-    """auto_analyze のデフォルトは True で、形態素解析が有効になっている。"""
+def test_auto_analyze_default_is_false():
+    """auto_analyze のデフォルトは False で、形態素解析による分析フィールド生成は行われない。"""
     with SearchEngine("ja") as app:
         app.add("1", "私は歩いて学校に行きました。")
         app.commit()
@@ -65,7 +65,7 @@ def test_auto_analyze_default_is_true():
         buckets = result["aggregations"]["word.verb"]["buckets"]
         keys = {bucket["key"] for bucket in buckets}
 
-        assert "行く" in keys, f"Default auto_analyze should be True; expected '行く' in {keys}"
+        assert "行く" not in keys, f"Default auto_analyze should be False; expected '行く' NOT in {keys}"
 
 
 def test_auto_analyze_attribute_stored():

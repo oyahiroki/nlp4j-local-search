@@ -2,7 +2,8 @@
 #
 # English text automatic morphological analysis (auto_analyze)
 #
-# SearchEngine("en") defaults to auto_analyze=True.
+# SearchEngine("en") defaults to auto_analyze=False.
+# To enable analysis, specify auto_analyze=True.
 # Adding natural English sentences with add() causes the Java side to
 # automatically analyze the text and populate fields such as:
 #   word.noun  (nouns)
@@ -26,7 +27,7 @@ DOCUMENTS = [
     ("10", "He walked his dog in the park"),
 ]
 
-with SearchEngine("en") as engine:
+with SearchEngine("en", auto_analyze=True) as engine:
 
     for doc_id, body in DOCUMENTS:
         engine.add(doc_id, body)

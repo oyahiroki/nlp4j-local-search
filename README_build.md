@@ -2,6 +2,14 @@
 
 https://pypi.org/project/nlp4j-local-search/
 
+Editable install
+
+```
+python3 -m pip uninstall nlp4j-local-search
+python3 -m pip install -e .
+```
+
+
 
 This document describes how to build and release `nlp4j-local-search` to PyPI.
 
