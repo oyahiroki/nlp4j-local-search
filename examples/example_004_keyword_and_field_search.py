@@ -12,31 +12,31 @@ from nlp4j_local_search import SearchEngine
 documents = [
     {
         "id": "1",
-        "body": "Kyoto is a historic city in Japan.",
+        "text_en": "Kyoto is a historic city in Japan.",
         "category": "city",
         "country": "Japan",
     },
     {
         "id": "2",
-        "body": "Nintendo is headquartered in Kyoto, Japan.",
+        "text_en": "Nintendo is headquartered in Kyoto, Japan.",
         "category": "company",
         "country": "Japan",
     },
     {
         "id": "3",
-        "body": "Tokyo is the capital city of Japan.",
+        "text_en": "Tokyo is the capital city of Japan.",
         "category": "city",
         "country": "Japan",
     },
     {
         "id": "4",
-        "body": "Paris is the capital city of France.",
+        "text_en": "Paris is the capital city of France.",
         "category": "city",
         "country": "France",
     },
     {
         "id": "5",
-        "body": "Sony is a Japanese multinational company based in Tokyo.",
+        "text_en": "Sony is a Japanese multinational company based in Tokyo.",
         "category": "company",
         "country": "Japan",
     },

@@ -51,11 +51,11 @@ def test_field_search_only():
 def test_keyword_and_field_search():
     print("=== キーワード + フィールド検索 ===")
     with SearchEngine("en") as engine:
-        engine.add_json({"id": "1", "body": "Kyoto is a historic city in Japan.",            "category": "city",    "country": "Japan"})
-        engine.add_json({"id": "2", "body": "Nintendo is headquartered in Kyoto, Japan.",    "category": "company", "country": "Japan"})
-        engine.add_json({"id": "3", "body": "Tokyo is the capital city of Japan.",           "category": "city",    "country": "Japan"})
-        engine.add_json({"id": "4", "body": "Paris is the capital city of France.",          "category": "city",    "country": "France"})
-        engine.add_json({"id": "5", "body": "Sony is a Japanese multinational company.",     "category": "company", "country": "Japan"})
+        engine.add_json({"id": "1", "text_en": "Kyoto is a historic city in Japan.",            "category": "city",    "country": "Japan"})
+        engine.add_json({"id": "2", "text_en": "Nintendo is headquartered in Kyoto, Japan.",    "category": "company", "country": "Japan"})
+        engine.add_json({"id": "3", "text_en": "Tokyo is the capital city of Japan.",           "category": "city",    "country": "Japan"})
+        engine.add_json({"id": "4", "text_en": "Paris is the capital city of France.",          "category": "city",    "country": "France"})
+        engine.add_json({"id": "5", "text_en": "Sony is a Japanese multinational company.",     "category": "company", "country": "Japan"})
         engine.commit()
 
         # "Kyoto" かつ category=company → id=2 のみ

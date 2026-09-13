@@ -12,27 +12,27 @@ from nlp4j_local_search import SearchEngine
 documents = [
     {
         "id": "1",
-        "body": "Kyoto is a historic city.",
+        "text_en": "Kyoto is a historic city.",
         "tags": ["city", "tourism", "Japan"],
     },
     {
         "id": "2",
-        "body": "Nintendo is headquartered in Kyoto.",
+        "text_en": "Nintendo is headquartered in Kyoto.",
         "tags": ["company", "Japan"],
     },
     {
         "id": "3",
-        "body": "Tokyo is the capital city of Japan.",
+        "text_en": "Tokyo is the capital city of Japan.",
         "tags": ["city", "capital", "Japan"],
     },
     {
         "id": "4",
-        "body": "Paris is a beautiful city in France.",
+        "text_en": "Paris is a beautiful city in France.",
         "tags": ["city", "tourism", "France"],
     },
     {
         "id": "5",
-        "body": "Sony is a Japanese company based in Tokyo.",
+        "text_en": "Sony is a Japanese company based in Tokyo.",
         "tags": ["company", "Japan"],
     },
 ]
@@ -104,9 +104,10 @@ with SearchEngine("en") as engine:
     total = response["hits"]["total"]["value"]
     print(f"  hits: {total}")
     for hit in response["hits"]["hits"]:
+        text = hit["_source"].get("text_en") or hit["_source"].get("body")
         print(
             f"  [{hit['_source']['id']}] "
-            f"{hit['_source']['body']}"
+            f"{text}"
         )
 
     print("=== 9. AND filter: tags:Japan AND tags:tourism ===")
@@ -125,9 +126,10 @@ with SearchEngine("en") as engine:
     total = response["hits"]["total"]["value"]
     print(f"  hits: {total}")
     for hit in response["hits"]["hits"]:
+        text = hit["_source"].get("text_en") or hit["_source"].get("body")
         print(
             f"  [{hit['_source']['id']}] "
-            f"{hit['_source']['body']}"
+            f"{text}"
         )
 
     # --- 4. 該当なしのケース ---

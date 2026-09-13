@@ -19,11 +19,11 @@ from nlp4j_local_search.errors import InvalidDocumentError
 # テスト用ドキュメント (Example06 / Example07 共通)
 # ---------------------------------------------------------------------------
 _DOCS = [
-    {"id": "1", "body": "Kyoto is a historic city.",                    "tags": ["city", "tourism", "Japan"]},
-    {"id": "2", "body": "Nintendo is headquartered in Kyoto.",          "tags": ["company", "Japan"]},
-    {"id": "3", "body": "Tokyo is the capital city of Japan.",          "tags": ["city", "capital", "Japan"]},
-    {"id": "4", "body": "Paris is a beautiful city in France.",         "tags": ["city", "tourism", "France"]},
-    {"id": "5", "body": "Sony is a Japanese company based in Tokyo.",   "tags": ["company", "Japan"]},
+    {"id": "1", "text_en": "Kyoto is a historic city.",                    "tags": ["city", "tourism", "Japan"]},
+    {"id": "2", "text_en": "Nintendo is headquartered in Kyoto.",          "tags": ["company", "Japan"]},
+    {"id": "3", "text_en": "Tokyo is the capital city of Japan.",          "tags": ["city", "capital", "Japan"]},
+    {"id": "4", "text_en": "Paris is a beautiful city in France.",         "tags": ["city", "tourism", "France"]},
+    {"id": "5", "text_en": "Sony is a Japanese company based in Tokyo.",   "tags": ["company", "Japan"]},
 ]
 
 

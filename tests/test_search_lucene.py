@@ -37,17 +37,17 @@ from nlp4j_local_search.result import SearchResult
 # ---------------------------------------------------------------------------
 
 DOCS = [
-    {"id": "1", "body": "Kyoto is a historic city in Japan.",
+    {"id": "1", "text_en": "Kyoto is a historic city in Japan.",
      "category": "city",    "country": "Japan"},
-    {"id": "2", "body": "Tokyo is the capital city of Japan.",
+    {"id": "2", "text_en": "Tokyo is the capital city of Japan.",
      "category": "city",    "country": "Japan"},
-    {"id": "3", "body": "Paris is the capital city of France.",
+    {"id": "3", "text_en": "Paris is the capital city of France.",
      "category": "city",    "country": "France"},
-    {"id": "4", "body": "Nintendo is headquartered in Kyoto, Japan.",
+    {"id": "4", "text_en": "Nintendo is headquartered in Kyoto, Japan.",
      "category": "company", "country": "Japan"},
-    {"id": "5", "body": "Sony is a Japanese multinational company.",
+    {"id": "5", "text_en": "Sony is a Japanese multinational company.",
      "category": "company", "country": "Japan"},
-    {"id": "6", "body": "Microsoft is headquartered in Redmond, USA.",
+    {"id": "6", "text_en": "Microsoft is headquartered in Redmond, USA.",
      "category": "company", "country": "USA"},
 ]
 

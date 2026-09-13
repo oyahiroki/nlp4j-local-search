@@ -1,6 +1,7 @@
 """DataSource — streaming source protocol and JsonlSource implementation."""
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 from typing import Iterator, Protocol, runtime_checkable
@@ -33,8 +34,21 @@ class JsonlSource:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
+    def _open(self):
+        if self.path.suffix == ".gz":
+            return gzip.open(
+                self.path,
+                mode="rt",
+                encoding="utf-8",
+            )
+
+        return self.path.open(
+            mode="r",
+            encoding="utf-8",
+        )
+    
     def __iter__(self) -> Iterator[dict]:
-        with open(self.path, encoding="utf-8") as f:
+        with self._open() as f:
             for line in f:
                 line = line.strip()
                 if not line:

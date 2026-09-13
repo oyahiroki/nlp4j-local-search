@@ -1,6 +1,7 @@
 # SearchEngine クラス
 import json
 from collections.abc import Mapping, Sequence
+from os import PathLike
 from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from jpype import JArray, JFloat
@@ -27,7 +28,15 @@ FilterMap = Mapping[str, str]
 JsonRequest = Union[str, Mapping[str, Any]]
 
 # add() の fields に使用できない予約済みフィールド名
-_RESERVED_FIELDS = frozenset({"id", "body", "vector"})
+_RESERVED_FIELDS = frozenset({
+    "id",
+    "body",
+    "text",
+    "text_ja",
+    "text_en",
+    "vector",
+    "data",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +111,8 @@ class SearchEngine:
         auto_analyze: bool = False,
         vector_dimension: Optional[int] = None,
         embedding: "Optional[EmbeddingProvider]" = None,
+        time_zone: Optional[str] = None,
+        index_dir: Optional[Union[str, PathLike[str]]] = None,
         classpath: Optional[Sequence[str]] = None,
         jvm_args: Optional[Sequence[str]] = None,
     ) -> None:
@@ -126,6 +137,13 @@ class SearchEngine:
             embedding:
                 Embedding provider used to generate vectors for queries and documents.
 
+            time_zone:
+                Time zone string (e.g. ``"Asia/Tokyo"``) for date indexing and enrichment.
+
+            index_dir:
+                Directory path to load / store a persistent disk index.
+                If specified, opens or creates an index at this path via ``loadIndexFrom()``.
+
             classpath:
                 Custom classpath for JVM initialization.
 
@@ -145,17 +163,31 @@ class SearchEngine:
 
         try:
             from nlp4j.lucene import LocalSearch
+            from java.nio.file import Paths  # noqa: PLC0415
 
             builder = LocalSearch.builder(lang)
             self.auto_analyze = bool(auto_analyze)
             builder = builder.autoAnalyze(self.auto_analyze)
+
+            if time_zone is not None:
+                builder = builder.timeZone(str(time_zone))
+
+            if index_dir is not None:
+                builder = builder.loadIndexFrom(Paths.get(str(index_dir)))
 
             if vector_dimension is not None:
                 builder = builder.vectorDimension(int(vector_dimension))
 
             self._java = builder.build()
             self.lang = lang
-            self.vector_dimension = vector_dimension
+            if lang == "ja":
+                self._default_text_field = "text_ja"
+            elif lang == "en":
+                self._default_text_field = "text_en"
+            else:
+                self._default_text_field = "text"
+
+            self.vector_dimension = int(self._java.getVectorDimension())
             self.embedding: "Optional[EmbeddingProvider]" = embedding
             self._analytics = None
             self._closed = False
@@ -206,8 +238,8 @@ class SearchEngine:
                     )
 
             # ベクトル文書
-            if isinstance(body, (list, tuple)):
-                if self.vector_dimension is None:
+            if isinstance(body, Sequence) and not isinstance(body, (str, bytes)):
+                if self.vector_dimension <= 0:
                     raise InvalidDocumentError(
                         "vector_dimension must be specified in __init__ to add vectors"
                     )
@@ -232,7 +264,7 @@ class SearchEngine:
                     # add_json 経由で追加フィールドをまとめて登録する
                     document = {
                         "id": str(id_or_doc),
-                        "body": str(body),
+                        self._default_text_field: str(body),
                         **dict(fields),
                     }
                     self.add_json(document)
@@ -290,10 +322,11 @@ class SearchEngine:
         Java の ``search(query, limit)`` を呼び出す。
         Lucene のクエリ構文をそのまま使用できる正式 API。
 
-        テキストフィールドの内部名::
+        デフォルト検索対象::
 
-            "ja" エンジン → text_ja
-            "en" エンジン → text_en
+            "ja" エンジン → text_ja, text, body
+            "en" エンジン → text_en, text, body
+            その他          → text, body
 
         クエリ例::
 
@@ -415,7 +448,7 @@ class SearchEngine:
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
-        if self.vector_dimension is None:
+        if self.vector_dimension <= 0:
             raise InvalidDocumentError(
                 "vector_dimension must be specified in __init__ to search with vectors"
             )
@@ -583,7 +616,7 @@ class SearchEngine:
             "size": size,
         }
 
-        if query:
+        if query is not None:
             request["query"] = query
 
         if filters:
@@ -672,6 +705,20 @@ class SearchEngine:
             raise
         except Exception as e:
             raise JavaSearchError("Failed to validate query") from e
+
+    def default_search_fields(self) -> "list[str]":
+        """bare query のデフォルト検索対象フィールド名一覧を返す。
+
+        例:
+            print(engine.default_search_fields())
+            # ['text_ja', 'text', 'body']
+        """
+        self._ensure_open()
+
+        try:
+            return [str(f) for f in self._java.getDefaultSearchFields()]
+        except Exception as e:
+            raise JavaSearchError("Failed to get default search fields") from e
 
     def fields(self) -> "list[str]":
         """インデックスに登録されているすべてのフィールド名を返す。
@@ -1038,6 +1085,32 @@ class SearchEngine:
 
         except Exception as e:
             raise JavaSearchError("Failed to create LocalAnalytics") from e
+
+    def save_index_to(self, path: Union[str, PathLike[str]]) -> None:
+        """インデックスおよびスキーマを指定したディレクトリへ保存する。
+
+        Java の ``saveIndexTo(Path)`` を呼び出す。
+        保存完了後、インデックスは自動的にクローズされます。
+
+        例:
+            engine.save_index_to("./saved_index")
+
+        Args:
+            path: 保存先ディレクトリのパス。
+        """
+        self._ensure_open()
+
+        if not path:
+            raise InvalidDocumentError("path must be a non-empty string or path")
+
+        try:
+            from java.nio.file import Paths  # noqa: PLC0415
+
+            self._java.saveIndexTo(Paths.get(str(path)))
+        except Exception as e:
+            raise JavaSearchError("Failed to save index") from e
+        finally:
+            self._closed = True
 
     def close(self) -> None:
         if self._closed:

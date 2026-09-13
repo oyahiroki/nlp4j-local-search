@@ -46,4 +46,5 @@ where = ["src"]
 nlp4j_local_search = ["jars/*.jar", "jars/**/*.jar"]
 
 [project.scripts]
-nlp4j-data = "nlp4j_local_search.cli.shell:main"
+nlp4j-data = "nlp4j_local_search.cli.data.shell:main"
+nlp4j-local-search = "nlp4j_local_search.cli.search.main:main"
