@@ -36,7 +36,13 @@ Commands:
         load("data.jsonl.gz", embedding="text_ja")
 
   fields
-      Show indexed fields.
+      Show fields that actually contain values in the loaded documents.
+
+      Fields that exist only in the schema but have no values are not shown.
+
+      Example:
+
+        fields
 
   aggregatable_fields
       Show fields available for aggregation / view.
@@ -57,7 +63,6 @@ Commands:
         search("高橋留美子 AND 星")
         search("text_ja:高橋留美子 AND category_s:恋愛漫画")
         search("timestamp_dt:[2026-01-01 TO *]")
-        search("timestamp_year_i:[2020 TO 2026]", 20)
 
   semantic_search("query")
   semantic_search("query", limit)
@@ -76,16 +81,23 @@ Commands:
   view("field", size, min_count)
       Show popular values of a field.
 
+      For DATE fields, a yearly histogram is shown by default.
+
       Examples:
 
         view("category_s")
         view("category_s", 20)
         view("category_s", 20, 3)
 
+        view("date")
+        view("timestamp_dt")
+
   view("field", "lucene query")
   view("field", "lucene query", size)
   view("field", "lucene query", size, min_count)
       Show values characteristic of documents matching a query.
+
+      For DATE fields, a yearly histogram is shown by default.
 
       Examples:
 
@@ -93,21 +105,29 @@ Commands:
         view("category_s", 'text_ja:"高橋留美子"', 20)
         view("category_s", 'text_ja:"高橋留美子"', 20, 3)
 
+        view("date", "Nissan")
+        view("timestamp_dt", "Nissan")
+
   view("date_field", interval="year")
   view("date_field", interval="month")
+  view("date_field", interval="hour")
   view("date_field", "lucene query", interval="year")
       Show a date histogram for a DATE field.
 
+      When interval is omitted, "year" is used by default.
+
       Missing periods are included with count=0.
 
-      Note: view("timestamp_year_i") uses a normal terms aggregation
-      and shows only years that have documents.
-      view("timestamp_dt", interval="year") uses DATE histogram and
-      shows all years from min to max, including years with count=0.
+      DATE fields include:
+        - fields ending with "_dt"
+        - "date" when its value is ISO 8601
+        - explicitly defined DATE fields
 
       Examples:
 
-        view("timestamp_dt", interval="year")
+        view("date")
+        view("date", interval="month")
+        view("timestamp_dt")
         view("timestamp_dt", interval="month")
         view("timestamp_dt", "Nissan", interval="year")
 
@@ -244,6 +264,7 @@ def complete_path(text: str) -> list[str]:
 def cli_completer(text: str, state: int) -> str | None:
     """Complete file names inside load("...")."""
     import readline  # noqa: PLC0415
+
     line = readline.get_line_buffer()
     prefix = 'load("'
 
@@ -509,7 +530,7 @@ class SearchCli:
     def fields(self) -> None:
         engine = self._require_engine()
 
-        for field in engine.fields():
+        for field in engine.fields_with_values():
             print(field)
 
     def aggregatable_fields(self) -> None:
@@ -575,15 +596,17 @@ class SearchCli:
             raise ValueError("field must be a string.")
 
         query: str | None = None
-        size = 10
+        size: int | None = None
         min_count: int | None = None
 
         # view("category_s")
+        # view("date")
         if len(args) == 1:
             pass
 
         # view("category_s", 20)
         # view("category_s", "text_ja:高橋留美子")
+        # view("date", "Nissan")
         elif len(args) == 2:
             if isinstance(args[1], str):
                 query = args[1]
@@ -617,12 +640,18 @@ class SearchCli:
             )
 
         if interval is not None:
+            # DATE histogram interval is explicitly specified.
+            # size is intentionally not passed because DATE histogram
+            # does not use the normal terms-aggregation size.
             result = engine.view(
                 field,
                 query,
                 interval=interval,
             )
         else:
+            # SearchEngine determines whether the field is a DATE field.
+            # DATE fields automatically use interval="year".
+            # Normal fields use the default size when size is None.
             result = engine.view(
                 field,
                 query,
@@ -770,9 +799,20 @@ class SearchCli:
                     f"Unknown view options: {sorted(unknown)}"
                 )
 
+            interval = kwargs.get("interval")
+
+            if interval is not None:
+                if (
+                    not isinstance(interval, str)
+                    or not interval.strip()
+                ):
+                    raise ValueError(
+                        "interval must be a non-empty string."
+                    )
+
             self.view(
                 *args,
-                interval=kwargs.get("interval"),
+                interval=interval,
             )
 
         else:
@@ -786,6 +826,7 @@ class SearchCli:
 
 def repl(cli: SearchCli) -> None:
     import readline  # noqa: PLC0415
+
     readline.set_completer(cli_completer)
     readline.parse_and_bind("tab: complete")
 
@@ -795,8 +836,10 @@ def repl(cli: SearchCli) -> None:
     print("nlp4j-local-search")
     print(f"Language: {cli.lang}")
     print(f"Auto analyze: {cli.auto_analyze}")
+
     if cli.time_zone is not None:
         print(f"Time zone: {cli.time_zone}")
+
     print("Type 'help' or '?' for help.")
     print()
 

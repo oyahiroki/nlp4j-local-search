@@ -25,39 +25,8 @@ def build_engine():
     return engine
 
 
-# ---------------------------------------------------------------------------
-# 1. DATE 派生フィールドの統合確認（新 JAR 読み込み確認を兼ねる）
-# ---------------------------------------------------------------------------
-
-def test_date_derived_fields_searchable():
-    """_dt 登録で year/month/day/hour 派生フィールドが検索可能になること。"""
-    with SearchEngine("ja", auto_analyze=False, time_zone="Asia/Tokyo") as engine:
-        engine.add_json({
-            "id": "1",
-            "body": "イベントA",
-            "event_dt": "2026-08-19T20:00:00+09:00",
-        })
-        engine.commit()
-
-        assert len(engine.search("event_year_i:2026")) == 1
-        assert len(engine.search("event_month_i:8")) == 1
-        assert len(engine.search("event_day_i:19")) == 1
-        assert len(engine.search("event_hour_i:20")) == 1
 
 
-def test_date_only_no_hour_field():
-    """date-only 文書では hour_i が生成されないこと。"""
-    with SearchEngine("en", auto_analyze=False) as engine:
-        engine.add_json({
-            "id": "1",
-            "body": "A",
-            "event_dt": "2026-08-19",
-        })
-        engine.commit()
-
-        assert len(engine.search("event_year_i:2026")) == 1
-        # date-only なので hour_i は存在しない → 0件
-        assert len(engine.search("event_hour_i:0")) == 0
 
 
 # ---------------------------------------------------------------------------

@@ -352,9 +352,9 @@ public class LocalSearchTestCase extends TestCase {
 					""");
 			search.commit();
 
-			// match クエリで text_ja=東京 を全文検索 → id=1, id=2 の 2 件
+			// match クエリで body=東京 を全文検索 → id=1, id=2 の 2 件
 			SearchResult[] results = search.searchJson("""
-					{"query":{"match":{"text_ja":"東京"}},"size":10}
+					{"query":{"match":{"body":"東京"}},"size":10}
 					""");
 			System.out.println("testSearchJson002 size: " + results.length);
 			for (int n = 0; n < results.length; n++) {
@@ -862,7 +862,7 @@ public class LocalSearchTestCase extends TestCase {
 			String responseJson = search.searchResponseJson("""
 					{
 					  "size": 10,
-					  "query": {"match": {"text_en": "Kyoto"}},
+					  "query": {"match": {"body": "Kyoto"}},
 					  "aggs": {
 					    "values": {"terms": {"field": "category", "size": 10}}
 					  }
@@ -963,8 +963,8 @@ public class LocalSearchTestCase extends TestCase {
 	}
 
 	/**
-	 * addJson() で "text" フィールドが "body" の代替として動作することを確認する。 全文検索で text
-	 * フィールドの内容がヒットすること。
+	 * addJson() で "text" フィールドを独立した全文検索フィールドとして 登録できることを確認する。 LocalSearch("ja") では
+	 * JapaneseAnalyzer で解析され、 デフォルト検索対象にも含まれる。
 	 */
 	public void testAddJsonTextField001() throws Exception {
 		try (LocalSearch search = new LocalSearch("ja")) {
@@ -2358,7 +2358,7 @@ public class LocalSearchTestCase extends TestCase {
 
 			// 2. 再ロードしてスキーマが復元されていることを確認
 			try (LocalSearch loaded = LocalSearch.builder("en").loadIndexFrom(dir).build()) {
-				nlp4j.lucene9.SearchSchema schema = loaded.schema;
+				nlp4j.lucene9.SearchSchema schema = loaded.getSchema();
 
 				// maker は KEYWORD として動的登録されていること
 				assertTrue("maker field should exist", schema.contains("maker"));
@@ -2429,7 +2429,7 @@ public class LocalSearchTestCase extends TestCase {
 			try (LocalSearch loaded = LocalSearch.builder("en").loadIndexFrom(dir)
 					.field("new_field", nlp4j.lucene9.FieldTypeDef.keyword().stored(true).aggregatable(true)).build()) {
 
-				nlp4j.lucene9.SearchSchema schema = loaded.schema;
+				nlp4j.lucene9.SearchSchema schema = loaded.getSchema();
 				assertTrue("new_field should be added via builder", schema.contains("new_field"));
 				assertEquals(nlp4j.lucene9.FieldTypeDef.Kind.KEYWORD, schema.get("new_field").kind());
 				assertTrue(schema.get("new_field").is_aggregatable());
@@ -2462,6 +2462,94 @@ public class LocalSearchTestCase extends TestCase {
 			} catch (LocalSearchException e) {
 				System.out.println("testSaveAndLoadSchemaConflictThrows001 exception: " + e.getMessage());
 				assertTrue(e.getMessage().contains("conflict"));
+			}
+		} finally {
+			deleteDirectory(dir);
+		}
+	}
+
+	/**
+	 * 非vector indexを保存し、reload時に .vectorDimension(3) を指定してロードした場合、 スキーマに vector
+	 * が追加され、新規 vector 文書を追加およびベクトル検索できることを確認する。
+	 */
+	public void testSaveAndLoadSchemaAddVectorDimension001() throws Exception {
+		java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("nlp4j-test-add-vector-");
+		try {
+			// 1. 非vector index を作成して保存
+			try (LocalSearch search = LocalSearch.builder("en").build()) {
+				search.add("1", "existing document");
+				search.commit();
+				search.saveIndexTo(dir);
+			}
+
+			// 2. reload 時に vectorDimension(3) を指定してロード
+			try (LocalSearch loaded = LocalSearch.builder("en").loadIndexFrom(dir).vectorDimension(3).build()) {
+
+				assertEquals(3, loaded.vectorDimension);
+				assertTrue(loaded.getSchema().contains("vector"));
+				assertEquals(nlp4j.lucene9.FieldTypeDef.Kind.KNN_VECTOR, loaded.getSchema().get("vector").kind());
+
+				// vector を持つ文書を追加
+				loaded.add("2", new float[] { 1.0f, 0.0f, 0.0f });
+				loaded.commit();
+
+				SearchResult[] results = loaded.searchVector(new float[] { 1.0f, 0.0f, 0.0f }, 10);
+				assertEquals(1, results.length);
+				assertEquals("2", results[0].id);
+			}
+		} finally {
+			deleteDirectory(dir);
+		}
+	}
+
+	/**
+	 * vectorDimension=3 のインデックスを reload 時に .vectorDimension(2) を指定した場合、
+	 * LocalSearchException がスローされることを確認する。
+	 */
+	public void testSaveAndLoadSchemaVectorDimensionConflictThrows001() throws Exception {
+		java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("nlp4j-test-vec-conflict-");
+		try {
+			// 1. vectorDimension=3 で保存
+			try (LocalSearch search = LocalSearch.builder("en").vectorDimension(3).build()) {
+				search.add("1", new float[] { 1.0f, 0.0f, 0.0f });
+				search.commit();
+				search.saveIndexTo(dir);
+			}
+
+			// 2. reload 時に vectorDimension(2) を指定 → conflict
+			try {
+				LocalSearch loaded = LocalSearch.builder("en").loadIndexFrom(dir).vectorDimension(2).build();
+				loaded.close();
+				fail("Expected LocalSearchException for conflicting vector dimensions");
+			} catch (LocalSearchException e) {
+				assertTrue(e.getMessage().contains("conflict") || e.getMessage().contains("dimension"));
+			}
+		} finally {
+			deleteDirectory(dir);
+		}
+	}
+
+	/**
+	 * vectorDimension=3 のインデックスを reload 時に .vectorDimension(3) を指定した場合、
+	 * 正常にオープンできることを確認する。
+	 */
+	public void testSaveAndLoadSchemaVectorDimensionMatch001() throws Exception {
+		java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("nlp4j-test-vec-match-");
+		try {
+			// 1. vectorDimension=3 で保存
+			try (LocalSearch search = LocalSearch.builder("en").vectorDimension(3).build()) {
+				search.add("1", new float[] { 1.0f, 0.0f, 0.0f });
+				search.commit();
+				search.saveIndexTo(dir);
+			}
+
+			// 2. reload 時に vectorDimension(3) を指定 → 正常
+			try (LocalSearch loaded = LocalSearch.builder("en").loadIndexFrom(dir).vectorDimension(3).build()) {
+
+				assertEquals(3, loaded.vectorDimension);
+				SearchResult[] results = loaded.searchVector(new float[] { 1.0f, 0.0f, 0.0f }, 10);
+				assertEquals(1, results.length);
+				assertEquals("1", results[0].id);
 			}
 		} finally {
 			deleteDirectory(dir);
@@ -2521,7 +2609,7 @@ public class LocalSearchTestCase extends TestCase {
 					""");
 			search.commit();
 
-			java.util.Map<String, Long> result = search.aggregate("category", "text_en:Kyoto", 10);
+			java.util.Map<String, Long> result = search.aggregate("category", "Kyoto", 10);
 			System.out.println("testAggregateQuery001 result: " + result);
 
 			// Kyoto を含む id=1, id=2 の 2 件が対象 → city:1, company:1
@@ -2569,8 +2657,8 @@ public class LocalSearchTestCase extends TestCase {
 					""");
 			search.commit();
 
-			// Lucene query で text_en:Kyoto + filters で country=Japan の組み合わせ
-			java.util.Map<String, Long> result = search.aggregate("category", "text_en:Kyoto", 10,
+			// Lucene query で Kyoto + filters で country=Japan の組み合わせ
+			java.util.Map<String, Long> result = search.aggregate("category", "Kyoto", 10,
 					java.util.Map.of("country", "Japan"));
 			System.out.println("testAggregateQuery002 result: " + result);
 
@@ -2598,7 +2686,7 @@ public class LocalSearchTestCase extends TestCase {
 			search.commit();
 
 			// size=1 → 最多バケット（city=2）のみ
-			java.util.Map<String, Long> result = search.aggregate("category", "text_en:Kyoto", 1);
+			java.util.Map<String, Long> result = search.aggregate("category", "Kyoto", 1);
 			System.out.println("testAggregateQuerySize001 result: " + result);
 
 			assertEquals(1, result.size());
@@ -2646,7 +2734,7 @@ public class LocalSearchTestCase extends TestCase {
 			String json = search.aggregateJson("""
 					{
 					  "field": "category",
-					  "query": "text_en:Kyoto",
+					  "query": "Kyoto",
 					  "size": 10
 					}
 					""");
@@ -2690,7 +2778,7 @@ public class LocalSearchTestCase extends TestCase {
 					""");
 			search.commit();
 
-			long count = search.count("text_en:Kyoto");
+			long count = search.count("Kyoto");
 
 			System.out.println("testCountQuery001 count: " + count);
 
@@ -2712,7 +2800,7 @@ public class LocalSearchTestCase extends TestCase {
 					""");
 			search.commit();
 
-			long count = search.count("text_en:Osaka");
+			long count = search.count("Osaka");
 
 			System.out.println("testCountQueryNoMatch001 count: " + count);
 
@@ -2743,10 +2831,10 @@ public class LocalSearchTestCase extends TestCase {
 			search.commit();
 
 			// Kyoto のみ → 2件
-			assertEquals(2, search.count("text_en:Kyoto"));
+			assertEquals(2, search.count("Kyoto"));
 
 			// Kyoto AND category=company → 1件
-			assertEquals(1, search.count("text_en:Kyoto AND category:company"));
+			assertEquals(1, search.count("Kyoto AND category:company"));
 		}
 	}
 
@@ -2773,10 +2861,10 @@ public class LocalSearchTestCase extends TestCase {
 			search.commit();
 
 			// フィルターなし → 2件
-			assertEquals(2, search.count("text_en:Kyoto", null));
+			assertEquals(2, search.count("Kyoto", null));
 
 			// category=company フィルター → 1件
-			assertEquals(1, search.count("text_en:Kyoto", java.util.Map.of("category", "company")));
+			assertEquals(1, search.count("Kyoto", java.util.Map.of("category", "company")));
 		}
 	}
 
@@ -2831,6 +2919,776 @@ public class LocalSearchTestCase extends TestCase {
 			assertEquals(1, vectorResults.length);
 			assertEquals("1", vectorResults[0].id);
 			assertEquals("Nintendo is headquartered in Kyoto.", vectorResults[0].body);
+		}
+	}
+
+	// =========================================================
+	// kaiwa0911-1212 仕様検証テスト
+	// =========================================================
+
+	/**
+	 * 1. body 入力: SearchResult.body が設定され、_source.body が存在し、_source.text_ja
+	 * は存在しないことを確認する。
+	 */
+	public void testAddJsonBodyField001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "京都は日本の都市です"
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+			assertEquals("京都は日本の都市です", results[0].body);
+
+			String responseJson = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {
+					    "match": {
+					      "body": "京都"
+					    }
+					  }
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+					.get("_source");
+
+			assertEquals("京都は日本の都市です", source.get("body").asString());
+			assertFalse(source.has("text_ja"));
+		}
+	}
+
+	/**
+	 * 2. text_ja 直接入力: "ja" エンジンで text_ja のみを投入した場合、検索可能で SearchResult.body /
+	 * _source.text_ja に設定されることを確認する。
+	 */
+	public void testAddJsonTextJaDirect001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "text_ja": "京都は日本の都市です"
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+			assertEquals("京都は日本の都市です", results[0].body);
+
+			String responseJson = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {
+					    "match": {
+					      "text_ja": "京都"
+					    }
+					  }
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+					.get("_source");
+
+			assertEquals("京都は日本の都市です", source.get("text_ja").asString());
+			assertFalse(source.has("body"));
+		}
+	}
+
+	/**
+	 * 3. text_en 直接入力: "en" エンジンで text_en のみを投入した場合、検索可能で SearchResult.body /
+	 * _source.text_en に設定されることを確認する。
+	 */
+	public void testAddJsonTextEnDirect001() throws Exception {
+		try (LocalSearch search = new LocalSearch("en")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "text_en": "Kyoto is a historic city."
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("Kyoto", 10);
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+			assertEquals("Kyoto is a historic city.", results[0].body);
+
+			String responseJson = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {
+					    "match": {
+					      "text_en": "Kyoto"
+					    }
+					  }
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+					.get("_source");
+
+			assertEquals("Kyoto is a historic city.", source.get("text_en").asString());
+			assertFalse(source.has("body"));
+		}
+	}
+
+	/**
+	 * 4. body と text_en は独立した2フィールド
+	 */
+	public void testAddJsonDuplicateSameValue001() throws Exception {
+		try (LocalSearch search = new LocalSearch("en")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "Kyoto is a historic city.",
+					  "text_en": "Kyoto is a historic city."
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("Kyoto", 10);
+			assertEquals(1, results.length);
+			assertEquals("Kyoto is a historic city.", results[0].body);
+
+			String responseJson = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {
+					    "match": {
+					      "text_en": "Kyoto"
+					    }
+					  }
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+					.get("_source");
+
+			assertEquals("Kyoto is a historic city.", source.get("body").asString());
+			assertEquals("Kyoto is a historic city.", source.get("text_en").asString());
+		}
+	}
+
+	/**
+	 * 5. body + text_en 異値: 異なる値でも両方正常に登録されることを確認する。
+	 */
+	public void testAddJsonMultipleTextFieldsDifferentValues001() throws Exception {
+		try (LocalSearch search = new LocalSearch("en")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "Kyoto is a historic city.",
+					  "text_en": "Tokyo is the capital."
+					}
+					""");
+			search.commit();
+
+			assertEquals(1, search.search("Kyoto", 10).length);
+			assertEquals(1, search.search("Tokyo", 10).length);
+		}
+	}
+
+	/**
+	 * 6. 別言語フィールド: "ja" エンジンに body と text_en を指定した場合、text_ja と text_en
+	 * の両方で検索可能であることを確認する。
+	 */
+	public void testAddJsonOtherLanguageField001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "京都について",
+					  "text_en": "About Kyoto"
+					}
+					""");
+			search.commit();
+
+			// 日本語検索でヒット
+			SearchResult[] rJa = search.search("京都", 10);
+			assertEquals(1, rJa.length);
+			assertEquals("1", rJa[0].id);
+			assertEquals("京都について", rJa[0].body);
+
+			// 英語フィールド指定検索でもヒット
+			SearchResult[] rEn = search.search("text_en:Kyoto", 10);
+			assertEquals(1, rEn.length);
+			assertEquals("1", rEn[0].id);
+			assertEquals("京都について", rEn[0].body);
+		}
+	}
+
+	/**
+	 * 7. autoAnalyze(false): body は返り、全文検索可能で、word.* フィールドは生成されないことを確認する。
+	 */
+	public void testAutoAnalyzeFalse001() throws Exception {
+		try (LocalSearch search = LocalSearch.builder("ja").autoAnalyze(false).build()) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "京都は日本の都市です"
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+			assertEquals(1, results.length);
+			assertEquals("京都は日本の都市です", results[0].body);
+
+			String responseJson = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {
+					    "match": {
+					      "body": "京都"
+					    }
+					  }
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+					.get("_source");
+
+			assertEquals("京都は日本の都市です", source.get("body").asString());
+			assertFalse(source.has("word"));
+			assertFalse(source.has("word.noun"));
+		}
+	}
+
+	/**
+	 * 8. インデックス保存・再ロード後の新schema挙動確認: 保存・再オープン後も新 schema が保持され、body
+	 * で検索結果が取得できることを確認する。
+	 */
+	public void testSaveAndReloadWithNewSchema001() throws Exception {
+		java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("localsearch_test_schema");
+
+		try {
+			try (LocalSearch search = LocalSearch.builder("en").build()) {
+				search.addJson("""
+						{
+						  "id": "1",
+						  "body": "Kyoto is a historic city.",
+						  "category": "city"
+						}
+						""");
+				search.commit();
+				search.saveIndexTo(tempDir);
+			}
+
+			try (LocalSearch search = LocalSearch.builder("en").loadIndexFrom(tempDir).build()) {
+				SearchResult[] results = search.search("Kyoto", 10);
+				assertEquals(1, results.length);
+				assertEquals("1", results[0].id);
+				assertEquals("Kyoto is a historic city.", results[0].body);
+
+				String responseJson = search.searchResponseJson("""
+						{
+						  "size": 10,
+						  "query": {
+						    "match": {
+						      "body": "Kyoto"
+						    }
+						  }
+						}
+						""");
+				nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(responseJson).get("hits").get("hits").get(0)
+						.get("_source");
+
+				assertEquals("Kyoto is a historic city.", source.get("body").asString());
+				assertFalse(source.has("text_en"));
+			}
+		} finally {
+			try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(tempDir)) {
+				files.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+					try {
+						java.nio.file.Files.deleteIfExists(p);
+					} catch (Exception ignored) {
+					}
+				});
+			}
+		}
+	}
+
+	/**
+	 * 9. 旧schema互換テスト: 旧形式 schema (body なし, text_en stored=true) を読み込んだ場合でも、
+	 * ensureCoreFields により body が追加され、toSearchResults() のフォールバックにより
+	 * SearchResult.body が取得できることを確認する。
+	 */
+	public void testLegacySchemaCompatibility001() throws Exception {
+		java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("localsearch_test_legacy");
+
+		try {
+			// 旧 index に Document を直接書き込む (body なし, text_en stored)
+			try (nlp4j.lucene9.LuceneIndex index = new nlp4j.lucene9.LuceneIndex()) {
+				org.apache.lucene.document.Document doc = new org.apache.lucene.document.Document();
+				doc.add(new org.apache.lucene.document.StringField("id", "legacy1",
+						org.apache.lucene.document.Field.Store.YES));
+				doc.add(new org.apache.lucene.document.TextField("text_en", "Legacy document body",
+						org.apache.lucene.document.Field.Store.YES));
+				index.add(doc);
+				index.commit();
+				index.writeToAndClose(tempDir);
+			}
+
+			// 旧形式の schema.json を手動作成 (body なし, text_en stored=true)
+			nlp4j.lucene9.SearchSchema legacySchema = new nlp4j.lucene9.SearchSchema();
+			legacySchema.add("id", nlp4j.lucene9.FieldTypeDef.keyword().stored(true));
+			legacySchema.add("text_en", nlp4j.lucene9.FieldTypeDef.text().stored(true));
+			legacySchema.add("data", nlp4j.lucene9.FieldTypeDef.storedOnly());
+			nlp4j.lucene9.SearchSchemaStore.save(tempDir, legacySchema);
+
+			// LocalSearch でロードして検索
+			try (LocalSearch search = LocalSearch.builder("en").loadIndexFrom(tempDir).build()) {
+				SearchResult[] results = search.search("Legacy", 10);
+				assertEquals(1, results.length);
+				assertEquals("legacy1", results[0].id);
+				assertEquals("Legacy document body", results[0].body);
+
+				// 新規ドキュメントも問題なく追加可能であること (ensureCoreFields で body が追加されているため)
+				search.addJson("""
+						{
+						  "id": "new1",
+						  "body": "New document body"
+						}
+						""");
+				search.commit();
+
+				SearchResult[] newResults = search.search("New", 10);
+				assertEquals(1, newResults.length);
+				assertEquals("new1", newResults[0].id);
+				assertEquals("New document body", newResults[0].body);
+			}
+		} finally {
+			try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(tempDir)) {
+				files.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+					try {
+						java.nio.file.Files.deleteIfExists(p);
+					} catch (Exception ignored) {
+					}
+				});
+			}
+		}
+	}
+
+	public void testAddJsonTextFieldStored001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "text": "京都は日本の都市です"
+					}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+
+			assertEquals(1, results.length);
+			assertEquals("京都は日本の都市です", results[0].body);
+
+			String json = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {"match": {"text": "京都"}}
+					}
+					""");
+
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(json).get("hits").get("hits").get(0).get("_source");
+
+			assertEquals("京都は日本の都市です", source.get("text").asString());
+
+			assertFalse(source.has("body"));
+			assertFalse(source.has("text_ja"));
+		}
+	}
+
+	public void testAddJsonNoTextField001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			try {
+				search.addJson("""
+						{
+						  "id": "1",
+						  "category": "city"
+						}
+						""");
+				fail("at least one text field or vector is required");
+			} catch (LocalSearchException e) {
+				assertTrue(e.getMessage().contains("Required field is missing"));
+			}
+		}
+	}
+
+	public void testCoreTextFieldSchema001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+
+			assertEquals( //
+					nlp4j.lucene9.FieldTypeDef.Kind.TEXT, //
+					search.getSchema().get("body").kind() //
+			);
+
+			assertEquals( //
+					nlp4j.lucene9.FieldTypeDef.Kind.TEXT, //
+					search.getSchema().get("text").kind() //
+			);
+
+			assertEquals( //
+					nlp4j.lucene9.FieldTypeDef.Kind.TEXT, //
+					search.getSchema().get("text_ja").kind() //
+			);
+
+			assertEquals( //
+					nlp4j.lucene9.FieldTypeDef.Kind.TEXT, //
+					search.getSchema().get("text_en").kind() //
+			);
+
+			assertTrue( //
+					search.getSchema().get("body").is_stored() //
+			);
+			assertTrue( //
+					search.getSchema().get("text").is_stored() //
+			);
+			assertTrue( //
+					search.getSchema().get("text_ja").is_stored() //
+			);
+			assertTrue( //
+					search.getSchema().get("text_en").is_stored() //
+			);
+		}
+	}
+
+	public void testAddDefaultTextJa001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.add("1", "京都は日本の都市です");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+			assertEquals("京都は日本の都市です", results[0].body);
+
+			String json = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {"match": {"text_ja": "京都"}}
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(json).get("hits").get("hits").get(0).get("_source");
+			assertEquals("京都は日本の都市です", source.get("text_ja").asString());
+			assertFalse(source.has("body"));
+		}
+	}
+
+	public void testAddDefaultTextEn001() throws Exception {
+		try (LocalSearch search = new LocalSearch("en")) {
+			search.add("1", "Kyoto is a historic city.");
+			search.commit();
+
+			SearchResult[] results = search.search("Kyoto", 10);
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+			assertEquals("Kyoto is a historic city.", results[0].body);
+
+			String json = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {"match": {"text_en": "Kyoto"}}
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(json).get("hits").get("hits").get(0).get("_source");
+			assertEquals("Kyoto is a historic city.", source.get("text_en").asString());
+			assertFalse(source.has("body"));
+		}
+	}
+
+	public void testAddJsonMultipleTextFields001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{
+					  "id": "1",
+					  "body": "京都について",
+					  "text": "テキスト",
+					  "text_ja": "日本語テキスト",
+					  "text_en": "English text"
+					}
+					""");
+			search.commit();
+
+			String json = search.searchResponseJson("""
+					{
+					  "size": 10,
+					  "query": {"match_all": {}}
+					}
+					""");
+			nlp4j.json.JsonNode source = nlp4j.json.JsonNode.parse(json).get("hits").get("hits").get(0).get("_source");
+			assertEquals("京都について", source.get("body").asString());
+			assertEquals("テキスト", source.get("text").asString());
+			assertEquals("日本語テキスト", source.get("text_ja").asString());
+			assertEquals("English text", source.get("text_en").asString());
+		}
+	}
+
+	public void testDefaultSearchFieldsJa001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.add("1", "京都 test"); // text_ja
+			search.addJson("""
+					{"id":"2","text":"京都 test"}
+					""");
+			search.addJson("""
+					{"id":"3","body":"京都 test"}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("京都", 10);
+			assertEquals(3, results.length);
+		}
+	}
+
+	public void testDefaultSearchFieldsEn001() throws Exception {
+		try (LocalSearch search = new LocalSearch("en")) {
+			search.add("1", "Kyoto test"); // text_en
+			search.addJson("""
+					{"id":"2","text":"Kyoto test"}
+					""");
+			search.addJson("""
+					{"id":"3","body":"Kyoto test"}
+					""");
+			search.commit();
+
+			SearchResult[] results = search.search("Kyoto", 10);
+			assertEquals(3, results.length);
+		}
+	}
+
+	public void testExplicitTextFieldSearch001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+			search.addJson("""
+					{"id":"1","body":"Kyoto body"}
+					""");
+			search.addJson("""
+					{"id":"2","text":"Kyoto text"}
+					""");
+			search.addJson("""
+					{"id":"3","text_en":"Kyoto english"}
+					""");
+			search.commit();
+
+			assertEquals(1, search.search("body:Kyoto", 10).length);
+			assertEquals("1", search.search("body:Kyoto", 10)[0].id);
+
+			assertEquals(1, search.search("text:Kyoto", 10).length);
+			assertEquals("2", search.search("text:Kyoto", 10)[0].id);
+
+			assertEquals(1, search.search("text_en:Kyoto", 10).length);
+			assertEquals("3", search.search("text_en:Kyoto", 10)[0].id);
+		}
+	}
+
+	public void testDefaultSearchFieldsJaExcludeTextEn001() throws Exception {
+		try (LocalSearch search = new LocalSearch("ja")) {
+
+			search.addJson("""
+					{"id":"1","text_en":"Kyoto only"}
+					""");
+
+			search.commit();
+
+			// ja のデフォルト検索対象は text_ja, text, body
+			assertEquals(0, search.search("Kyoto", 10).length);
+
+			// 明示すれば検索できる
+			SearchResult[] results = search.search("text_en:Kyoto", 10);
+
+			assertEquals(1, results.length);
+			assertEquals("1", results[0].id);
+		}
+	}
+
+	// =========================================================
+	// MultiValued Field - 1要素配列のバグ回帰テスト
+	// =========================================================
+
+	/**
+	 * addJson() で最初のドキュメントに1要素の JSON 配列を含む場合でも、 multiValued=true
+	 * として登録され、続く複数要素配列でも例外が発生しないことを確認する。
+	 *
+	 * <p>
+	 * Wikipedia 漫画 JSONL のような「最初の文書は1カテゴリ、次の文書は複数カテゴリ」 というパターンで起きたバグの回帰テスト。
+	 * </p>
+	 */
+	public void testMultiValuedSingleElementArray001() throws Exception {
+
+		try (LocalSearch search = LocalSearch.builder("ja").autoAnalyze(false).build()) {
+
+			// 最初の文書では配列だが要素数は1
+			search.addJson("""
+					{
+					  "id":"222",
+					  "text_ja":"日本の漫画家では、日本における漫画家について解説する。",
+					  "category_s":["日本の漫画家"]
+					}
+					""");
+
+			// この時点ですでに multiValued=true であること
+			assertTrue(search.getSchema().contains("category_s"));
+			assertTrue(search.getSchema().get("category_s").is_multiValued());
+
+			// 次の文書では2要素
+			search.addJson("""
+					{
+					  "id":"224",
+					  "text_ja":"日本の漫画作品一覧。",
+					  "category_s":["漫画作品一覧","日本の漫画"]
+					}
+					""");
+
+			// さらに多数要素
+			search.addJson("""
+					{
+					  "id":"225",
+					  "text_ja":"うる星やつらは、高橋留美子による日本の漫画。",
+					  "category_s":[
+					    "うる星やつら",
+					    "高橋留美子の漫画作品",
+					    "1978年の漫画",
+					    "SF漫画作品",
+					    "恋愛漫画"
+					  ]
+					}
+					""");
+
+			search.commit();
+
+			assertEquals(3L, search.count());
+
+			assertEquals(1L, search.count("category_s:恋愛漫画"));
+
+			assertEquals(1L, search.count("category_s:日本の漫画"));
+
+			// aggregation まで確認: JSON array → multiValued schema → index → DocValues
+			// aggregation
+			java.util.Map<String, Long> categories = search.aggregate("category_s", 100);
+
+			assertEquals(Long.valueOf(1L), categories.get("日本の漫画家"));
+
+			assertEquals(Long.valueOf(1L), categories.get("日本の漫画"));
+
+			assertEquals(Long.valueOf(1L), categories.get("恋愛漫画"));
+		}
+	}
+
+	/**
+	 * addJson() で最初に scalar 値として登録されたフィールドを、 後から JSON 配列として渡すと LocalSearchException
+	 * が発生することを確認する。
+	 *
+	 * <p>
+	 * scalar → array のスキーマ変更は Lucene の DocValues 型変更を引き起こすため、 明示的なエラーにすることが安全。
+	 * </p>
+	 */
+	public void testMultiValuedScalarThenArrayThrows001() throws Exception {
+
+		try (LocalSearch search = LocalSearch.builder("en").autoAnalyze(false).build()) {
+
+			search.addJson("""
+					{
+					  "id":"1",
+					  "body":"doc1",
+					  "tags":"Japan"
+					}
+					""");
+
+			try {
+				search.addJson("""
+						{
+						  "id":"2",
+						  "body":"doc2",
+						  "tags":["Japan","city"]
+						}
+						""");
+
+				fail("Expected LocalSearchException");
+
+			} catch (LocalSearchException e) {
+				assertTrue(e.getMessage().contains("single-valued") || e.getMessage().contains("multiple values"));
+			}
+		}
+	}
+
+	public void testAddJsonAutoAnalyzeTrue001() throws Exception {
+
+		try (LocalSearch search = LocalSearch.builder("ja").autoAnalyze(true).build()) {
+
+			search.addJson("""
+					{
+					  "id":"222",
+					  "text_ja":"日本の漫画家では、日本における漫画家について解説する。",
+					  "category_s":["日本の漫画家"]
+					}
+					""");
+
+			search.commit();
+
+			assertEquals(1L, search.count());
+
+			// 通常全文検索
+			assertEquals(1, search.search("漫画家", 10).length);
+
+			// autoAnalyze により word.* が生成されていること
+			assertTrue(search.aggregate("word.noun", 100).size() > 0);
+		}
+	}
+
+	public void testAddJsonAutoAnalyzeTrue001b() throws Exception {
+
+		try (LocalSearch search = LocalSearch.builder("ja").autoAnalyze(true).build()) {
+
+			search.addJson("""
+					{
+					  "id":"222",
+					  "text_ja":"日本の漫画家では、日本における漫画家について解説する。",
+					  "category_s":["日本の漫画家"]
+					}
+					""");
+			search.addJson("""
+					{
+					  "id":"223",
+					  "text_ja":"日本の画家では、日本における画家について解説する。",
+					  "category_s":["日本の画家"]
+					}
+					""");
+
+			search.commit();
+
+			assertEquals(2L, search.count());
+
+			// 通常全文検索
+			assertEquals(1, search.search("漫画家", 10).length);
+
+			// autoAnalyze により word.* が生成されていること
+			assertTrue(search.aggregate("word.noun", 100).size() > 0);
+		}
+	}
+
+	public void testAddJsonAutoAnalyzeConj001() throws Exception {
+
+		try (LocalSearch search = LocalSearch.builder("ja").autoAnalyze(true).build()) {
+
+			search.addJson(
+					"""
+							{
+							  "id":"580",
+							  "text_ja":"『秘密戦隊ゴレンジャー』は、1975年4月5日から1977年3月26日まで、NET系列で毎週土曜19時30分から20時に全84話が放送された、NET・東映制作の特撮テレビドラマ特撮全史134}}、および作中に登場するヒーローチームの名称。",
+							  "category_s":["秘密戦隊ゴレンジャー"]
+							}
+							""");
+
+			search.commit();
+
+			assertEquals(1L, search.count());
+
+			assertTrue(search.getSchema().contains("word.conj"));
+
+			assertTrue(search.aggregate("word.conj", 100).size() > 0);
 		}
 	}
 }

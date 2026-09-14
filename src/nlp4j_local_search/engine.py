@@ -736,6 +736,26 @@ class SearchEngine:
         except Exception as e:
             raise JavaSearchError("Failed to get fields") from e
 
+    def fields_with_values(self) -> "list[str]":
+        """実際に値を持つフィールド名の一覧を返す。
+
+        空のフィールドや、schema にのみ存在していて
+        文書に値が登録されていないフィールドは含まれない。
+
+        例:
+            print(engine.fields_with_values())
+            # ['id', 'body', 'data', 'category_s']
+        """
+        self._ensure_open()
+
+        try:
+            java_fields = self._java.getFieldsWithValues()
+            return [str(f) for f in java_fields]
+        except Exception as e:
+            raise JavaSearchError(
+                "Failed to get fields with values"
+            ) from e
+
     def aggregatable_fields(self) -> "list[str]":
         """terms aggregation が可能なフィールド名の一覧を返す。
 
@@ -800,6 +820,57 @@ class SearchEngine:
             raise
         except Exception as e:
             raise JavaSearchError("Failed to execute relativeRateLucene") from e
+
+    def field_kind(self, field: str) -> Optional[str]:
+        """フィールド型を返す。存在しないフィールドでは None。
+
+        例::
+
+            engine.field_kind("date")
+            # "DATE"
+
+            engine.field_kind("category_s")
+            # "KEYWORD"
+
+            engine.field_kind("unknown")
+            # None
+
+        Args:
+            field: フィールド名。
+
+        Returns:
+            フィールドの型名文字列（例: ``"DATE"``, ``"KEYWORD"``）、
+            または存在しないフィールドの場合は ``None``。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *field* が空文字列のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if not isinstance(field, str) or not field.strip():
+            raise InvalidDocumentError(
+                "field must be a non-empty string"
+            )
+
+        try:
+            kind = self._java.getFieldKind(field)
+
+            if kind is None:
+                return None
+
+            return str(kind.name())
+
+        except Exception as e:
+            raise JavaSearchError(
+                f"Failed to get field kind: {field}"
+            ) from e
+
+    def _is_date_field(self, field: str) -> bool:
+        """指定フィールドが DATE 型かどうかを返す。"""
+        return self.field_kind(field) == "DATE"
 
     def _view_field(
         self,
@@ -872,10 +943,15 @@ class SearchEngine:
             buckets = engine.date_histogram("created_dt", "year")
             buckets = engine.date_histogram("created_dt", "year", query="Nissan")
             buckets = engine.date_histogram("created_dt", "year", filters={"brand_s": "Nissan"})
+            buckets = engine.date_histogram("date", "year")
 
         Args:
-            field:    DATE フィールド名（``_dt`` サフィックスが必要）。
-            interval: 集計間隔。``\"year\"`` / ``\"month\"`` / ``\"day\"`` / ``\"hour\"`` を指定。
+            field:
+                DATE フィールド名。
+                ``*_dt`` フィールド、ISO8601 値により DATE と判定された
+                ``date`` フィールド、または明示的に DATE と定義された
+                フィールドを指定できる。
+            interval: 集計間隔。``\"year\"`` / ``\"month\"`` / ``\"hour\"`` を指定。
             query:    Lucene クエリ文字列（省略可）。
             filters:  keyword フィールドの絞り込み条件（省略可）。
 
@@ -905,9 +981,15 @@ class SearchEngine:
         try:
             from nlp4j.lucene9 import DateHistogramInterval  # noqa: PLC0415
 
+            normalized_interval = interval.strip().lower()
+            if normalized_interval not in {"year", "month", "hour"}:
+                raise InvalidDocumentError(
+                    "interval must be one of: year, month, hour"
+                )
+
             try:
                 java_interval = DateHistogramInterval.valueOf(
-                    interval.strip().upper()
+                    normalized_interval.upper()
                 )
             except Exception as e:
                 raise InvalidDocumentError(
@@ -967,6 +1049,9 @@ class SearchEngine:
             engine.view("category")
             → category フィールドの count 上位10件（縦型テーブル）。
 
+            engine.view("date")
+            → DATE フィールドの場合は year をデフォルトとしてヒストグラム表示。
+
         Lucene クエリで絞り込み:
             engine.view("part", "maker:Nissan")
             → maker:Nissan 対象の part について relativeRate 上位10件。
@@ -986,6 +1071,14 @@ class SearchEngine:
         Jupyter / Colab では式として評価するだけでも表示される。
         """
         self._ensure_open()
+
+        # DATE field は interval 未指定なら year をデフォルトにする
+        if (
+            field is not None
+            and interval is None
+            and self._is_date_field(field)
+        ):
+            interval = "year"
 
         # DATE histogram モード
         if interval is not None:
