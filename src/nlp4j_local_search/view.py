@@ -50,15 +50,18 @@ class ViewField:
                      None in count-only mode.
         total_count: Total documents in the index (relativeRate mode).
                      None in count-only mode.
+        interval:    DATE histogram interval (e.g. ``\"year\"``).
+                     None for normal aggregation fields.
     """
     field: str
     buckets: list[ViewBucket]
     count: Optional[int] = None
     total_count: Optional[int] = None
+    interval: Optional[str] = None
 
 
 # Type alias for sort key
-SortKey = Literal["count", "relative_rate"]
+SortKey = Literal["count", "relative_rate", "key"]
 
 
 @dataclass(frozen=True)
@@ -222,11 +225,40 @@ class ViewResult:
 
         return "\n".join(lines)
 
+    def _format_date_histogram(self, item: ViewField) -> str:
+        lines = [
+            f"View: {item.field}",
+            f"Interval: {item.interval}",
+        ]
+
+        if self.lucene_query:
+            lines.append(f"Lucene query: {self.lucene_query}")
+
+        lines.extend([
+            "Values are ordered chronologically.",
+            "",
+            f"{'Rank':>4}  {'Period':<20} {'Count':>8}",
+            f"{'-'*4}  {'-'*20} {'-'*8}",
+        ])
+
+        for rank, bucket in enumerate(item.buckets, start=1):
+            lines.append(
+                f"{rank:>4}  "
+                f"{_truncate(bucket.key):<20} "
+                f"{bucket.count:>8}"
+            )
+
+        return "\n".join(lines)
+
     def _format_single_field(self) -> str:
         if not self.fields:
             return "View: no data"
 
         item = self.fields[0]
+
+        if item.interval is not None:
+            return self._format_date_histogram(item)
+
         has_rr = any(b.relative_rate is not None for b in item.buckets)
 
         lines: list[str] = [f"View: {item.field}"]

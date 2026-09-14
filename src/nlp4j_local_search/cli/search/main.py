@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import readline
 import sys
 import time
 from pathlib import Path
@@ -93,6 +92,24 @@ Commands:
         view("category_s", 'text_ja:"高橋留美子"')
         view("category_s", 'text_ja:"高橋留美子"', 20)
         view("category_s", 'text_ja:"高橋留美子"', 20, 3)
+
+  view("date_field", interval="year")
+  view("date_field", interval="month")
+  view("date_field", "lucene query", interval="year")
+      Show a date histogram for a DATE field.
+
+      Missing periods are included with count=0.
+
+      Note: view("timestamp_year_i") uses a normal terms aggregation
+      and shows only years that have documents.
+      view("timestamp_dt", interval="year") uses DATE histogram and
+      shows all years from min to max, including years with count=0.
+
+      Examples:
+
+        view("timestamp_dt", interval="year")
+        view("timestamp_dt", interval="month")
+        view("timestamp_dt", "Nissan", interval="year")
 
   exit
   quit
@@ -226,6 +243,7 @@ def complete_path(text: str) -> list[str]:
 
 def cli_completer(text: str, state: int) -> str | None:
     """Complete file names inside load("...")."""
+    import readline  # noqa: PLC0415
     line = readline.get_line_buffer()
     prefix = 'load("'
 
@@ -267,6 +285,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--auto-analyze",
         action="store_true",
         help="Enable NLP4J automatic linguistic analysis.",
+    )
+
+    parser.add_argument(
+        "--time-zone",
+        dest="time_zone",
+        help='Time zone for DATE fields, e.g. "Asia/Tokyo" or "UTC".',
     )
 
     return parser
@@ -359,9 +383,11 @@ class SearchCli:
         *,
         lang: str,
         auto_analyze: bool = False,
+        time_zone: str | None = None,
     ) -> None:
         self.lang = lang
         self.auto_analyze = auto_analyze
+        self.time_zone = time_zone
         self.engine: SearchEngine | None = None
         self.loaded_path: Path | None = None
 
@@ -432,6 +458,7 @@ class SearchCli:
             self.lang,
             auto_analyze=self.auto_analyze,
             embedding=embedder,
+            time_zone=self.time_zone,
         )
 
         if embedding is not None:
@@ -531,7 +558,11 @@ class SearchCli:
 
         print_results(results)
 
-    def view(self, *args: Any) -> None:
+    def view(
+        self,
+        *args: Any,
+        interval: str | None = None,
+    ) -> None:
         engine = self._require_engine()
 
         if not args:
@@ -585,11 +616,18 @@ class SearchCli:
                 "view() accepts at most four arguments."
             )
 
-        result = engine.view(
-            field,
-            query,
-            size=size,
-        )
+        if interval is not None:
+            result = engine.view(
+                field,
+                query,
+                interval=interval,
+            )
+        else:
+            result = engine.view(
+                field,
+                query,
+                size=size,
+            )
 
         if min_count is not None:
             result = result.filter(
@@ -725,12 +763,17 @@ class SearchCli:
 
         elif name == "view":
 
-            if kwargs:
+            unknown = set(kwargs) - {"interval"}
+
+            if unknown:
                 raise ValueError(
-                    "view() does not accept keyword arguments."
+                    f"Unknown view options: {sorted(unknown)}"
                 )
 
-            self.view(*args)
+            self.view(
+                *args,
+                interval=kwargs.get("interval"),
+            )
 
         else:
             raise ValueError(
@@ -742,6 +785,7 @@ class SearchCli:
 
 
 def repl(cli: SearchCli) -> None:
+    import readline  # noqa: PLC0415
     readline.set_completer(cli_completer)
     readline.parse_and_bind("tab: complete")
 
@@ -751,6 +795,8 @@ def repl(cli: SearchCli) -> None:
     print("nlp4j-local-search")
     print(f"Language: {cli.lang}")
     print(f"Auto analyze: {cli.auto_analyze}")
+    if cli.time_zone is not None:
+        print(f"Time zone: {cli.time_zone}")
     print("Type 'help' or '?' for help.")
     print()
 
@@ -781,6 +827,7 @@ def main(args: list[str] | None = None) -> int:
     cli = SearchCli(
         lang=parsed_args.lang,
         auto_analyze=parsed_args.auto_analyze,
+        time_zone=parsed_args.time_zone,
     )
 
     try:

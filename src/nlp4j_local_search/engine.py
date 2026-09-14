@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 from jpype import JArray, JFloat
 
 from .analytics import AnalyticsQuery, AnalyticsResult
+from .date_histogram import DateHistogramBucket
 from .errors import InvalidDocumentError, JavaSearchError
 from .jvm import ensure_jvm
 from .result import QueryValidationResult, SearchResult
@@ -296,7 +297,7 @@ class SearchEngine:
         try:
             self._java.addJson(json_text)
         except Exception as e:
-            raise JavaSearchError("Failed to add JSON document") from e
+            raise JavaSearchError(f"Failed to add JSON document: {e}") from e
 
     def add_all(self, docs: Iterable["dict[str, Any]"]) -> None:
         for doc in docs:
@@ -854,6 +855,99 @@ class SearchEngine:
                 total_count=analytics_result.total_count,
             )
 
+    def date_histogram(
+        self,
+        field: str,
+        interval: str,
+        *,
+        query: Optional[str] = None,
+        filters: Optional[FilterMap] = None,
+    ) -> "list[DateHistogramBucket]":
+        """DATE フィールドのヒストグラム集計を実行する。
+
+        min ～ max の連続した時間軸を 0件を含めて返す。
+
+        例::
+
+            buckets = engine.date_histogram("created_dt", "year")
+            buckets = engine.date_histogram("created_dt", "year", query="Nissan")
+            buckets = engine.date_histogram("created_dt", "year", filters={"brand_s": "Nissan"})
+
+        Args:
+            field:    DATE フィールド名（``_dt`` サフィックスが必要）。
+            interval: 集計間隔。``\"year\"`` / ``\"month\"`` / ``\"day\"`` / ``\"hour\"`` を指定。
+            query:    Lucene クエリ文字列（省略可）。
+            filters:  keyword フィールドの絞り込み条件（省略可）。
+
+        Returns:
+            :class:`~nlp4j_local_search.date_histogram.DateHistogramBucket` のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *field* / *interval* / *query* が不正なとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if not isinstance(field, str) or not field.strip():
+            raise InvalidDocumentError("field must be a non-empty string")
+
+        if not isinstance(interval, str) or not interval.strip():
+            raise InvalidDocumentError("interval must be a non-empty string")
+
+        if query is not None:
+            if not isinstance(query, str) or not query.strip():
+                raise InvalidDocumentError(
+                    "query must be a non-empty string or None"
+                )
+
+        try:
+            from nlp4j.lucene9 import DateHistogramInterval  # noqa: PLC0415
+
+            try:
+                java_interval = DateHistogramInterval.valueOf(
+                    interval.strip().upper()
+                )
+            except Exception as e:
+                raise InvalidDocumentError(
+                    f"Unsupported date histogram interval: {interval!r}"
+                ) from e
+
+            java_filters = _to_java_string_map(filters, argument_name="filters")
+
+            if java_filters is not None:
+                java_buckets = self._java.dateHistogram(
+                    field,
+                    java_interval,
+                    query,
+                    java_filters,
+                )
+            elif query is not None:
+                java_buckets = self._java.dateHistogram(
+                    field,
+                    java_interval,
+                    query,
+                )
+            else:
+                java_buckets = self._java.dateHistogram(
+                    field,
+                    java_interval,
+                )
+
+            return [
+                DateHistogramBucket.from_java(bucket)
+                for bucket in java_buckets
+            ]
+
+        except InvalidDocumentError:
+            raise
+
+        except Exception as e:
+            raise JavaSearchError(
+                f"Failed to execute date histogram: {e}"
+            ) from e
+
     def view(
         self,
         field: Optional[str] = None,
@@ -861,6 +955,7 @@ class SearchEngine:
         *,
         size: Optional[int] = None,
         candidate_size: int = 1000,
+        interval: Optional[str] = None,
     ) -> ViewResult:
         """インデックスのデータをひと目で概観するための inspection API。
 
@@ -891,6 +986,42 @@ class SearchEngine:
         Jupyter / Colab では式として評価するだけでも表示される。
         """
         self._ensure_open()
+
+        # DATE histogram モード
+        if interval is not None:
+            if field is None:
+                raise InvalidDocumentError(
+                    "field is required when interval is specified"
+                )
+            if size is not None:
+                raise InvalidDocumentError(
+                    "size is not supported for date histogram view"
+                )
+
+            date_buckets = self.date_histogram(
+                field,
+                interval,
+                query=lucene_query,
+            )
+
+            item = ViewField(
+                field=field,
+                interval=interval,
+                buckets=[
+                    ViewBucket(
+                        key=b.key,
+                        count=b.doc_count,
+                    )
+                    for b in date_buckets
+                ],
+            )
+
+            return ViewResult(
+                fields=[item],
+                lucene_query=lucene_query,
+                single_field=True,
+                sort_key="key",
+            )
 
         if size is None:
             size = 3 if field is None else 10

@@ -1,4 +1,5 @@
 from .analytics import AnalyticsBucket, AnalyticsKeyword, AnalyticsQuery, AnalyticsResult
+from .date_histogram import DateHistogramBucket
 from .embedding import EmbeddingProvider, Vector
 from .engine import SearchEngine
 from .errors import (
@@ -27,6 +28,7 @@ __all__ = [
     "JVMStartError",
     "JavaSearchError",
     "InvalidDocumentError",
+    "DateHistogramBucket",
     "ViewResult",
     "ViewField",
     "ViewBucket",
