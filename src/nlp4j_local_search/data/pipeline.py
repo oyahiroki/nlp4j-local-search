@@ -31,7 +31,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Iterator, Optional, Tuple
 
 from .config import PipelineConfig
 from .errors import DataLoadError, DataPipelineError, DataWriteError
@@ -280,7 +280,12 @@ class DataPipeline:
             elapsed_seconds=elapsed,
         )
 
-    def load(self) -> LoadResult:
+    def load(
+        self,
+        *,
+        progress_callback: Callable[[int, float], None] | None = None,
+        progress_interval_seconds: float = 1.0,
+    ) -> LoadResult:
         """Process the pipeline and load all documents into the SearchEngine.
 
         **Requires a SearchEngine** — raises :class:`DataPipelineError` when
@@ -288,6 +293,13 @@ class DataPipeline:
         Use ``engine.data(path).load()`` instead.
 
         Optionally saves a JSONL copy when :meth:`save_as` was called.
+
+        Args:
+            progress_callback:
+                Optional callback called periodically while documents are loaded.
+                The callback receives ``(loaded_count, elapsed_seconds)``.
+            progress_interval_seconds:
+                Minimum interval between progress callback invocations.
         """
         if self.engine is None:
             raise DataPipelineError(
@@ -298,6 +310,8 @@ class DataPipeline:
         provider = self._resolve_provider()
 
         start = time.perf_counter()
+        last_progress_at = start
+
         read_count = 0
         loaded_count = 0
         written_count = 0
@@ -320,6 +334,12 @@ class DataPipeline:
                     self.engine.add_json(doc)
                     loaded_count += 1
 
+                    if progress_callback is not None:
+                        now = time.perf_counter()
+                        if now - last_progress_at >= progress_interval_seconds:
+                            progress_callback(loaded_count, now - start)
+                            last_progress_at = now
+
             self.engine.commit()
 
         except DataPipelineError:
@@ -330,6 +350,10 @@ class DataPipeline:
             ) from e
 
         elapsed = time.perf_counter() - start
+
+        if progress_callback is not None:
+            progress_callback(loaded_count, elapsed)
+
         return LoadResult(
             read_count=read_count,
             loaded_count=loaded_count,

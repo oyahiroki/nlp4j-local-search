@@ -16,6 +16,12 @@ def _truncate(value: Any, width: int = 20) -> str:
     return text[: width - 3] + "..."
 
 
+def _full_value_if_truncated(value: Any, width: int = 20) -> str:
+    """Return the full string only when it was truncated; otherwise empty string."""
+    text = str(value)
+    return text if len(text) > width else ""
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -281,10 +287,10 @@ class ViewResult:
         if has_rr:
             lines.append(
                 f"{'Rank':>4}  {'Value':<20} {'Count':>8} "
-                f"{'All Count':>10} {'Relative Rate':>14}"
+                f"{'All Count':>10} {'Relative Rate':>14}  Full Value"
             )
             lines.append(
-                f"{'-'*4}  {'-'*20} {'-'*8} {'-'*10} {'-'*14}"
+                f"{'-'*4}  {'-'*20} {'-'*8} {'-'*10} {'-'*14}  {'-'*40}"
             )
             for rank, b in enumerate(item.buckets, start=1):
                 rr_str = f"{b.relative_rate:.2f}x" if b.relative_rate is not None else "-"
@@ -294,18 +300,20 @@ class ViewResult:
                     f"{_truncate(b.key):<20} "
                     f"{b.count:>8} "
                     f"{ac_str:>10} "
-                    f"{rr_str:>14}"
+                    f"{rr_str:>14}  "
+                    f"{_full_value_if_truncated(b.key)}"
                 )
         else:
             lines.append(
-                f"{'Rank':>4}  {'Value':<20} {'Count':>8}"
+                f"{'Rank':>4}  {'Value':<20} {'Count':>8}  Full Value"
             )
-            lines.append(f"{'-'*4}  {'-'*20} {'-'*8}")
+            lines.append(f"{'-'*4}  {'-'*20} {'-'*8}  {'-'*40}")
             for rank, b in enumerate(item.buckets, start=1):
                 lines.append(
                     f"{rank:>4}  "
                     f"{_truncate(b.key):<20} "
-                    f"{b.count:>8}"
+                    f"{b.count:>8}  "
+                    f"{_full_value_if_truncated(b.key)}"
                 )
 
         return "\n".join(lines)

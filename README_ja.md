@@ -1,6 +1,8 @@
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
+https://pypi.org/project/nlp4j-local-search/
+
 https://github.com/oyahiroki/nlp4j-local-search
 
 # nlp4j-local-search

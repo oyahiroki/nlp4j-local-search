@@ -231,6 +231,41 @@ class _ProgressEmbeddingProvider:
         )
 
 
+class _LoadProgressReporter:
+    """Display load progress on a single terminal line."""
+
+    def __init__(self) -> None:
+        self._active = False
+
+    def start(self) -> None:
+        print("Loading documents...", flush=True)
+        self._active = True
+
+    def update(
+        self,
+        loaded_count: int,
+        elapsed_seconds: float,
+    ) -> None:
+        rate = (
+            loaded_count / elapsed_seconds
+            if elapsed_seconds > 0
+            else 0.0
+        )
+
+        print(
+            f"\rLoading: {loaded_count:,} documents "
+            f"| {rate:,.0f} docs/sec "
+            f"| {elapsed_seconds:.1f}s",
+            end="",
+            flush=True,
+        )
+
+    def finish(self) -> None:
+        if self._active:
+            print()
+            self._active = False
+
+
 def complete_path(text: str) -> list[str]:
     """Return file-system path completions."""
     path = Path(text).expanduser()
@@ -504,7 +539,16 @@ class SearchCli:
 
                 pipeline = pipeline.embedding(embedding)
 
-            pipeline.load()
+            progress = _LoadProgressReporter()
+            progress.start()
+
+            try:
+                pipeline.load(
+                    progress_callback=progress.update,
+                    progress_interval_seconds=1.0,
+                )
+            finally:
+                progress.finish()
 
             if progress_embedder is not None:
                 progress_embedder.finish()
