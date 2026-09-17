@@ -36,9 +36,19 @@ Commands:
         load("data.jsonl.gz", embedding="text_ja")
 
   fields
-      Show fields that actually contain values in the loaded documents.
+      Show a summary of fields that contain values.
 
-      Fields that exist only in the schema but have no values are not shown.
+      Columns:
+        Field         Field name
+        Type          Field data type
+        Aggregatable  Whether the field supports aggregation
+        Coverage      Percentage of documents containing a value
+        Unique        Number of unique values for KEYWORD fields
+        Diversity     Unique / documents containing a value
+        Example       Example stored value
+
+      Unique and Diversity are calculated only for aggregatable
+      KEYWORD fields.
 
       Example:
 
@@ -573,9 +583,7 @@ class SearchCli:
 
     def fields(self) -> None:
         engine = self._require_engine()
-
-        for field in engine.fields_with_values():
-            print(field)
+        print(engine.fields_summary())
 
     def aggregatable_fields(self) -> None:
         engine = self._require_engine()

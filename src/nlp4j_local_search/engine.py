@@ -9,6 +9,7 @@ from jpype import JArray, JFloat
 from .analytics import AnalyticsQuery, AnalyticsResult
 from .date_histogram import DateHistogramBucket
 from .errors import InvalidDocumentError, JavaSearchError
+from .field_summary import FieldsSummary
 from .jvm import ensure_jvm
 from .result import QueryValidationResult, SearchResult
 from .view import ViewBucket, ViewField, ViewResult
@@ -770,6 +771,39 @@ class SearchEngine:
             return [str(f) for f in java_fields]
         except Exception as e:
             raise JavaSearchError("Failed to get aggregatable fields") from e
+
+    def fields_summary(self) -> FieldsSummary:
+        """実際に値を持つフィールドの概要情報を返す。
+
+        Java ``LocalSearch.getFieldsSummary()`` のPythonラッパー。
+
+        Coverage:
+            aggregatable fieldについて、値を持つ文書の割合。
+
+        Unique / Diversity:
+            aggregatable KEYWORD fieldについてのみ取得する。
+
+        Example:
+            stored valueが利用可能な場合に取得する。
+
+        Returns:
+            FieldsSummary:
+                全live documents数とフィールドごとの概要情報。
+
+        Raises:
+            JavaSearchError:
+                Java側でフィールド情報の取得に失敗した場合。
+        """
+        self._ensure_open()
+
+        try:
+            java_summary = self._java.getFieldsSummary()
+            return FieldsSummary.from_java(java_summary)
+
+        except Exception as e:
+            raise JavaSearchError(
+                "Failed to get fields summary"
+            ) from e
 
     def relative_rate_lucene(
         self,
