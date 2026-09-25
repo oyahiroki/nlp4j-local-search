@@ -2,7 +2,7 @@
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 from .errors import JVMStartError
 
@@ -54,7 +54,7 @@ def extract_jar_contents(jar_path: Path) -> tuple[list[str], str]:
 
 
 def ensure_jvm(
-    classpath: Optional[Sequence[str | Path]] = None,
+    classpath: Optional[Sequence[Union[str, Path]]] = None,
     jvm_args: Optional[Sequence[str]] = None,
 ) -> None:
     try:

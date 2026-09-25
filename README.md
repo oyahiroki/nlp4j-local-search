@@ -62,21 +62,23 @@ No external search engine process.
 - Python-first API
 - Apache Lucene-based full-text search
 - In-memory local search
-- No Elasticsearch required
-- No OpenSearch required
-- No Solr required
-- No Docker required
-- Japanese full-text search
-- English full-text search
+- No Elasticsearch / OpenSearch / Solr / Docker required
+- Japanese and English full-text search
 - JSON document input
 - **Field filtering** — filter results by exact-match field values (AND conditions)
 - **Vector search (KNN)** — nearest-neighbour search using float vectors
-- **Vector search with field filters** — KNN search scoped to a field-filtered subset
+  - Legacy single-field API (`vector_dimension=`)
+  - Named multi-field API (`vector_fields=` + `VectorFieldConfig`)
+  - `field_info()` — schema metadata (type, dimension, similarity, model)
+  - `search_vector(field=..., filter_query=...)` — field-targeted KNN with Lucene filter
+  - `search_vector_by_text()` — automatic embedding → KNN search
 - **MultiValued fields** — register JSON array fields; each element is indexed as an independent keyword value
-- **Aggregation** — terms aggregation (`aggregate()` / `aggregate_json()`) on MultiValued and single-value fields
-- **OpenSearch Query DSL** — `search_json()` and `search_response_json()` for complex queries including multi-value AND conditions
-- **`view()` inspection API** — browse index content at a glance; count mode and relative-rate mode with `sort_by()` / `filter()` chains
-- Useful for NLP and RAG experiments
+- **Aggregation** — terms aggregation (`aggregate()` / `aggregate_json()`)
+- **OpenSearch Query DSL** — `search_json()` and `search_response_json()`
+- **`view()` inspection API** — browse index content at a glance with `sort_by()` / `filter()` chains
+- **REST API server** — Elasticsearch/OpenSearch-compatible REST API with Swagger UI (optional)
+- **Interactive CLI** — `nlp4j-local-search` REPL for loading and querying datasets
+- **Data CLI** — `nlp4j-data` REPL for inspecting and transforming JSONL files
 
 ---
 
@@ -84,6 +86,12 @@ No external search engine process.
 
 ```bash
 pip install nlp4j-local-search
+```
+
+With the REST API server:
+
+```bash
+pip install "nlp4j-local-search[server]"
 ```
 
 ## Development version
@@ -305,23 +313,15 @@ with SearchEngine("en") as engine:
                      "tags": ["company", "Japan"]})
     engine.add_json({"id": "3", "body": "Tokyo is the capital city of Japan.",
                      "tags": ["city", "capital", "Japan"]})
-    engine.add_json({"id": "4", "body": "Paris is a beautiful city in France.",
-                     "tags": ["city", "tourism", "France"]})
-    engine.add_json({"id": "5", "body": "Sony is a Japanese company based in Tokyo.",
-                     "tags": ["company", "Japan"]})
     engine.commit()
 
-    # All documents — count by tags
+    # Count by tags
     response = engine.aggregate("tags", size=10)
     for bucket in response["aggregations"]["tags"]["buckets"]:
         print(bucket["key"], bucket["doc_count"])
-    # Japan 4 / city 3 / tourism 2 / company 2 / capital 1 / France 1
 
     # Pre-filter with full-text query before aggregating
     response = engine.aggregate("tags", size=10, query="Kyoto")
-
-    # Limit result buckets
-    response = engine.aggregate("tags", size=3)
 ```
 
 `aggregate()` parameters:
@@ -357,64 +357,32 @@ response = engine.aggregate_json({
 from nlp4j_local_search import SearchEngine
 
 with SearchEngine("en", auto_analyze=False) as engine:
-    engine.add_json({"id": "1", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
-    engine.add_json({"id": "2", "body": "...", "maker": "Nissan", "category": "body",       "part": "door mirror"})
-    engine.add_json({"id": "3", "body": "...", "maker": "Nissan", "category": "electrical", "part": "battery"})
-    engine.add_json({"id": "4", "body": "...", "maker": "Toyota", "category": "brake",      "part": "brake"})
-    engine.add_json({"id": "5", "body": "...", "maker": "Toyota", "category": "electrical", "part": "battery"})
-    engine.add_json({"id": "6", "body": "...", "maker": "Honda",  "category": "brake",      "part": "brake"})
+    engine.add_json({"id": "1", "body": "...", "maker": "Nissan", "part": "door mirror"})
+    engine.add_json({"id": "2", "body": "...", "maker": "Nissan", "part": "door mirror"})
+    engine.add_json({"id": "3", "body": "...", "maker": "Nissan", "part": "battery"})
+    engine.add_json({"id": "4", "body": "...", "maker": "Toyota", "part": "brake"})
     engine.commit()
 
     # Overview — top 3 values per aggregatable field
     print(engine.view())
-    # View: aggregatable fields
-    # Format: field | value (document count)
-    #
-    # maker    | Nissan (3), Toyota (2), Honda (1)
-    # category | brake (2), body (2), electrical (2)
-    # part     | brake (2), door mirror (2), battery (2)
 
     # Single field — top 10 values in table form
     print(engine.view("maker"))
-    # View: maker
-    # Values are ordered by document count.
-    #
-    # Rank  Value                   Count
-    # ----  -------------------- --------
-    #    1  Nissan                      3
-    #    2  Toyota                      2
-    #    3  Honda                       1
 ```
 
-**Relative-rate mode** — with a Lucene query (keyword fields supported):
+**Relative-rate mode** — with a Lucene query:
 
 ```python
     # How distinctive is each part value for Nissan documents vs. all documents?
     print(engine.view("part", "maker:Nissan"))
-    # View: part
-    # Lucene query: maker:Nissan
-    # Matched documents: 3 / 6
-    # Values are ordered by relative rate.
-    #
-    # Rank  Value                   Count  All Count  Relative Rate
-    # ----  -------------------- -------- ---------- --------------
-    #    1  door mirror                 2          2          2.00x
-    #    2  battery                     1          2          1.00x
 ```
 
-**Chain methods** — `sort_by()` and `filter()` return a new `ViewResult` without mutating the original:
+**Chain methods** — `sort_by()` and `filter()` return a new `ViewResult`:
 
 ```python
     result = engine.view("part", "maker:Nissan")
-
-    # Keep only buckets with relative_rate >= 1.5
     filtered = result.filter(min_relative_rate=1.5)
-
-    # Re-sort by count ascending
     sorted_asc = result.sort_by("count", descending=False)
-
-    # Chain: filter then sort
-    chained = result.filter(min_count=1).sort_by("relative_rate")
 ```
 
 `view()` parameters:
@@ -422,20 +390,15 @@ with SearchEngine("en", auto_analyze=False) as engine:
 | Parameter | Type | Description |
 |---|---|---|
 | `field` | `str` (optional) | Field to inspect. Omit for overview of all aggregatable fields. |
-| `lucene_query` | `str` (optional) | Lucene query to pre-filter documents (keyword fields supported). Activates relative-rate mode. |
+| `lucene_query` | `str` (optional) | Lucene query to pre-filter documents. Activates relative-rate mode. |
 | `size` | `int` (optional) | Number of buckets to display. Default: 3 (overview) or 10 (single field). |
-| `candidate_size` | `int` (default `1000`) | Number of top candidates used for relative-rate computation (relative-rate mode only). |
-
-The return value is a `ViewResult`. `print(result)` or evaluating it in Jupyter produces a formatted table.
-The underlying data is always intact: `result.fields[0].buckets[0].key` returns the full, un-truncated value.
+| `candidate_size` | `int` (default `1000`) | Top candidates for relative-rate computation. |
 
 ---
 
 ## OpenSearch Query DSL
 
 ### `search_json()` — returns `list[SearchResult]`
-
-Pass an OpenSearch-compatible Query DSL and get back a list of `SearchResult` objects.
 
 ```python
 results = engine.search_json({
@@ -449,28 +412,15 @@ results = engine.search_json({
         }
     },
 })
-for r in results:
-    print(r.id, r.body)
 ```
 
 ### `search_response_json()` — returns the full OpenSearch response `dict`
 
-Use this when you need `hits.total`, `_source`, or want to combine hits and aggregations in one call.
-This is also the recommended way to apply **AND conditions on the same field** (not possible with the `filters` dict, which cannot have duplicate keys).
-
 ```python
 response = engine.search_response_json({
     "size": 10,
-    "query": {
-        "bool": {
-            "filter": [
-                {"term": {"tags": "Japan"}},
-                {"term": {"tags": "city"}},
-            ]
-        }
-    },
+    "query": {"bool": {"filter": [{"term": {"tags": "Japan"}}]}},
 })
-
 total = response["hits"]["total"]["value"]
 for hit in response["hits"]["hits"]:
     print(hit["_source"]["id"], hit["_source"].get("body"))
@@ -478,9 +428,9 @@ for hit in response["hits"]["hits"]:
 
 ---
 
-## Vector Search
+## Vector Search — Legacy API (`vector_dimension`)
 
-Pass `vector_dimension` to `SearchEngine` to enable KNN vector search.
+Pass `vector_dimension` to enable KNN vector search using the default `"vector"` field.
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -489,10 +439,9 @@ with SearchEngine("en", vector_dimension=2) as engine:
     engine.add("1_East",  [1.0,  0.0])
     engine.add("2_North", [0.0,  1.0])
     engine.add("3_West",  [-1.0, 0.0])
-    engine.add("4_South", [-1.0, -1.0])
     engine.commit()
 
-    results = engine.search([0.9, 0.1], limit=4)
+    results = engine.search_vector([0.9, 0.1], limit=10)
     for r in results:
         print(r.id, r.score)
 ```
@@ -501,37 +450,135 @@ Results are returned in descending cosine-similarity order.
 
 ---
 
-## Vector Search with Field Filters
+## Vector Search — Named Field API (`vector_fields`)
 
-Attach fields when adding vectors, then pass `filters` at search time.
-The filter is applied **inside** the KNN query (not as post-processing), so the top-k
-results are taken from the matching subset only.
+Use `VectorFieldConfig` and `vector_fields=` to define one or more named KNN vector fields.
+This is the recommended API for new projects.
 
 ```python
-from nlp4j_local_search import SearchEngine
+from nlp4j_local_search import SearchEngine, VectorFieldConfig
 
-with SearchEngine("en", vector_dimension=2) as engine:
-    engine.add("1_tech_East",   [ 1.0,  0.0], fields={"category": "tech",   "country": "Japan"})
-    engine.add("2_tech_North",  [ 0.0,  1.0], fields={"category": "tech",   "country": "Japan"})
-    engine.add("3_travel_East", [ 0.9,  0.2], fields={"category": "travel", "country": "Japan"})
-    engine.add("4_travel_West", [-1.0,  0.0], fields={"category": "travel", "country": "France"})
-    engine.add("5_tech_NE",     [ 0.7,  0.7], fields={"category": "tech",   "country": "USA"})
+with SearchEngine(
+    lang="en",
+    vector_fields={
+        "vector3": VectorFieldConfig(
+            dimension=3,
+            similarity="cosine",
+            model="demo-3d",
+        )
+    },
+) as engine:
+
+    engine.add_json({
+        "id": "1",
+        "text_en": "Electric vehicle battery",
+        "category_s": "vehicle",
+        "vector3": [1.0, 0.0, 0.0],
+    })
+    engine.add_json({
+        "id": "2",
+        "text_en": "Computer software",
+        "category_s": "software",
+        "vector3": [0.0, 1.0, 0.0],
+    })
     engine.commit()
 
-    query_vector = [0.9, 0.1]
+    # Vector field metadata
+    info = engine.field_info("vector3")
+    print(info.type)        # VECTOR
+    print(info.dimension)   # 3
+    print(info.model)       # demo-3d
 
-    # Without filter: all documents ranked by similarity
-    results = engine.search(query_vector, limit=10)
+    # KNN search on a named field
+    results = engine.search_vector(
+        [1.0, 0.0, 0.0],
+        field="vector3",
+        limit=10,
+    )
 
-    # With filter: only "tech" documents, ranked by similarity
-    results = engine.search(query_vector, limit=10, filters={"category": "tech"})
+    # KNN search with a Lucene query filter
+    results = engine.search_vector(
+        [1.0, 0.0, 0.0],
+        field="vector3",
+        limit=10,
+        filter_query='category_s:"vehicle"',
+    )
 
-    # Multiple filters (AND)
-    results = engine.search(query_vector, limit=10,
-                            filters={"category": "tech", "country": "Japan"})
+    # List all VECTOR fields
+    print(engine.vector_fields())  # ['vector3']
+```
 
-    for r in results:
-        print(r.id, r.score)
+`VectorFieldConfig` parameters:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `dimension` | `int` | *(required)* | Number of dimensions. Must be > 0. |
+| `similarity` | `str` | `"cosine"` | Similarity function: `cosine`, `dot_product`, `euclidean`, `maximum_inner_product`. |
+| `model` | `str` | `None` | Optional embedding model identifier stored in the schema. |
+
+---
+
+## Vector Search with Text Query (`search_vector_by_text`)
+
+When an `EmbeddingProvider` is configured, you can search by text directly.
+
+```python
+from nlp4j_local_search import SearchEngine, VectorFieldConfig
+from my_embedding import MyEmbeddingProvider
+
+embedding = MyEmbeddingProvider()  # must implement embed_query(text) and .dimension
+
+with SearchEngine(
+    lang="ja",
+    vector_fields={
+        "vector1024": VectorFieldConfig(dimension=1024),
+    },
+    embedding=embedding,
+) as engine:
+
+    # ... add documents ...
+    engine.commit()
+
+    results = engine.search_vector_by_text(
+        "ヒューズの交換",
+        field="vector1024",
+        limit=10,
+        filter_query='maker_s:"ニッサン"',
+    )
+```
+
+---
+
+## Vector Search with Field Filters (Legacy)
+
+The legacy `filters=` dict is supported for the default `"vector"` field only.
+For named fields use `filter_query=` instead.
+
+```python
+with SearchEngine("en", vector_dimension=2) as engine:
+    engine.add("1", [1.0, 0.0], fields={"category": "tech"})
+    engine.add("2", [0.0, 1.0], fields={"category": "travel"})
+    engine.commit()
+
+    results = engine.search_vector(
+        [0.9, 0.1], limit=10, filters={"category": "tech"}
+    )
+```
+
+---
+
+## `field_info()` — Schema Metadata
+
+```python
+info = engine.field_info("vector3")
+# FieldInfo(name='vector3', type='VECTOR', stored=False, aggregatable=False,
+#           sortable=False, range=False, multi_valued=False,
+#           dimension=3, similarity='cosine', model='demo-3d')
+
+info = engine.field_info("category_s")
+# FieldInfo(name='category_s', type='KEYWORD', ...)
+
+engine.field_info("nonexistent")  # None
 ```
 
 ---
@@ -558,18 +605,8 @@ When using `SearchEngine("en")`, English text is analyzed with an English analyz
 
 This means that search can handle common English word variations such as:
 
-- `search`
-- `searches`
-- `searched`
-- `searching`
-
-It can also handle cases such as:
-
+- `search` / `searches` / `searched` / `searching`
 - `document` / `documents`
-- `Lucene` / `Lucene's`
-- uppercase / lowercase differences
-
-This is useful when you want more than simple substring matching.
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -578,33 +615,15 @@ with SearchEngine("en") as engine:
     engine.add("1", "Developers are searching documents with a local search engine.")
     engine.add("2", "A developer searched many documents yesterday.")
     engine.add("3", "This tool searches local JSON documents.")
-    engine.add("4", "Lucene's EnglishAnalyzer is useful for English full-text search.")
-    engine.add("5", "The quick brown fox jumps over the lazy dog.")
-
     engine.commit()
 
-    print("Query: search")
     for r in engine.search("search", limit=10):
         print(r.id, r.body, r.score)
-
-    print("Query: document")
-    for r in engine.search("document", limit=10):
-        print(r.id, r.body, r.score)
-
-    print("Query: lucene")
-    for r in engine.search("lucene", limit=10):
-        print(r.id, r.body, r.score)
 ```
-
-Unlike simple substring matching, English full-text search can match related word forms such as `search`, `searched`, and `searching`.
-
-This makes it useful for local search, NLP experiments, and search baseline evaluation.
 
 ---
 
 ## Japanese Search Example
-
-For Japanese text, use `SearchEngine("ja")`.
 
 ```python
 from nlp4j_local_search import SearchEngine
@@ -614,14 +633,113 @@ with SearchEngine("ja") as engine:
     engine.add("2", "京都は日本の都市です")
     engine.add("3", "京都市には任天堂の本社があります")
     engine.add("4", "大阪は関西の大都市です")
-
     engine.commit()
 
     for r in engine.search("京都", limit=10):
         print(r.id, r.body, r.score)
 ```
 
-This is useful when you want to try Japanese full-text search locally without setting up a search server.
+---
+
+## Interactive CLI — `nlp4j-local-search`
+
+An interactive REPL for loading JSONL datasets into a local Lucene index and exploring them.
+
+```bash
+nlp4j-local-search --lang ja
+```
+
+```text
+>> load("data.jsonl.gz")
+Loaded 30,956 documents in 4.21 seconds (7,353 docs/sec).
+
+>> search("高橋留美子", 5)
+[473079] score=8.8259
+『勝手なやつら』は、高橋留美子のデビュー作。...
+
+>> view("category_s", 10)
+View: category_s
+...
+
+>> exit
+bye
+```
+
+Available commands: `load`, `count`, `fields`, `aggregatable_fields`, `search`, `view`, `help`, `exit`.
+
+See [`src/nlp4j_local_search/cli/search/README.md`](src/nlp4j_local_search/cli/search/README.md) for the full reference.
+
+---
+
+## Data CLI — `nlp4j-data`
+
+An interactive REPL for inspecting, transforming, and exporting JSONL datasets — no JVM required.
+
+```bash
+nlp4j-data
+```
+
+```text
+>> data sample.jsonl
+Loaded source: sample.jsonl
+Documents: 100
+
+>> attrs
+id
+title
+text
+category
+
+>> remove category
+Removed: category
+id, title, text
+
+>> rename text body
+Renamed: text -> body
+id, title, body
+
+>> write_jsonl output.jsonl
+100
+
+>> exit
+```
+
+Available commands: `data`, `attrs`, `head`, `remove`, `rename`, `pipeline`, `undo`, `write_jsonl`, `save_config`, `help`, `exit`.
+
+See [`src/nlp4j_local_search/cli/data/README.md`](src/nlp4j_local_search/cli/data/README.md) for the full reference.
+
+---
+
+## REST API Server
+
+An Elasticsearch/OpenSearch-compatible REST API server with Swagger UI.
+
+Install:
+
+```bash
+pip install "nlp4j-local-search[server]"
+```
+
+Start:
+
+```bash
+nlp4j-local-search-server --lang ja --index myindex --data mydata.jsonl.gz
+```
+
+Swagger UI is automatically available at `http://localhost:9200/docs` — no additional setup required.
+
+Supported endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Server info |
+| `GET /{index}/_mapping` | Field mapping |
+| `GET /{index}/_search?q=...` | Full-text search (query string) |
+| `POST /{index}/_search` | Search with Query DSL |
+| `GET /{index}/_count` | Document count |
+| `POST /{index}/_count` | Document count with query |
+
+See [`src/nlp4j_local_search/server/README.md`](src/nlp4j_local_search/server/README.md) for the full reference.
 
 ---
 
@@ -646,9 +764,7 @@ with SearchEngine("ja") as engine:
 
     engine.commit()
 
-    results = engine.search("京都", limit=10)
-
-    for r in results:
+    for r in engine.search("京都", limit=10):
         print(f"ID: {r.id}, Score: {r.score:.4f}")
         print(f"Body: {r.body}")
         print("-" * 50)
@@ -690,7 +806,7 @@ This makes the library useful for:
 - Proof-of-concept development
 - Local NLP workflows
 
-The index is not persisted to disk.
+The index is not persisted to disk by default.
 
 ### Python-First API
 
@@ -712,7 +828,7 @@ You can quickly create a searchable index from text data, Wikipedia-derived data
 
 ### RAG Prototyping
 
-Before building a full RAG system, you can test local keyword search behavior with small or medium-sized datasets.
+Before building a full RAG system, you can test local keyword search and KNN vector search with small or medium-sized datasets.
 
 ### Search Baseline for Embedding Experiments
 
@@ -731,17 +847,21 @@ This project is currently in an early development stage.
 Current focus:
 
 - Simple local full-text search from Python
-- Japanese search
-- English search
+- Japanese search and English search
 - JSON document input (including MultiValued fields via JSON arrays)
 - In-memory indexing
 - Field filtering (exact-match keyword filters, AND conditions)
-- Vector search (KNN)
-- Vector search with field filters
+- Vector search — legacy `vector_dimension` API and named-field `vector_fields` API
+- Named vector field schema metadata (`field_info()`, `vector_fields()`)
+- `search_vector(field=..., filter_query=...)` — field-targeted KNN with Lucene filter
+- `search_vector_by_text()` — text → embedding → KNN
 - Aggregation (`aggregate()` / `aggregate_json()`)
 - OpenSearch Query DSL (`search_json()` / `search_response_json()`)
 - `view()` inspection API (count mode and relative-rate mode)
 - `relative_rate()` / `relative_rate_lucene()` analytics
+- Interactive CLI (`nlp4j-local-search`)
+- Data transformation CLI (`nlp4j-data`)
+- REST API server with Swagger UI (optional, `[server]` extra)
 
 APIs may change in future versions.
 
@@ -753,11 +873,15 @@ Planned or considered features:
 
 - ~~PyPI release~~ ✓
 - ~~Vector search~~ ✓
+- ~~Named vector field API (`VectorFieldConfig`, `vector_fields`)~~ ✓
 - ~~Field filtering~~ ✓
 - ~~MultiValued fields~~ ✓
 - ~~Aggregation~~ ✓
 - ~~OpenSearch Query DSL (`search_json` / `search_response_json`)~~ ✓
 - ~~`view()` inspection API~~ ✓
+- ~~Interactive CLI (`nlp4j-local-search`)~~ ✓
+- ~~Data CLI (`nlp4j-data`)~~ ✓
+- ~~REST API server with Swagger UI~~ ✓
 - Improved Google Colab support
 - Persistent index (disk-based)
 
@@ -800,4 +924,3 @@ GitHub:
 ```text
 https://github.com/oyahiroki
 ```
-

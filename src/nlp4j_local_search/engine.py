@@ -172,11 +172,26 @@ class SearchEngine:
         """
         # Resolve vector_dimension from embedding if provided
         if embedding is not None:
-            if vector_dimension is None:
+            if vector_dimension is None and not vector_fields:
+                # 後方互換: embedding のみ指定した場合はデフォルト "vector" フィールドへ反映
                 vector_dimension = embedding.dimension
-            elif vector_dimension != embedding.dimension:
+            elif vector_dimension is not None and vector_dimension != embedding.dimension:
                 raise ValueError(
                     "vector_dimension does not match embedding.dimension"
+                )
+            # vector_fields が指定されている場合は vector_dimension を触らない
+
+        # vector_dimension と vector_fields["vector"] の競合チェック（Java処理前に実施）
+        if (
+            vector_dimension is not None
+            and vector_fields
+            and "vector" in vector_fields
+        ):
+            cfg_v = vector_fields["vector"]
+            dim_v = cfg_v.dimension if isinstance(cfg_v, VectorFieldConfig) else cfg_v["dimension"]
+            if dim_v != vector_dimension:
+                raise ValueError(
+                    "vector_dimension conflicts with vector_fields['vector'].dimension"
                 )
 
         ensure_jvm(classpath=classpath, jvm_args=jvm_args)
@@ -211,32 +226,20 @@ class SearchEngine:
 
                 for field_name, cfg in vector_fields.items():
                     if isinstance(cfg, dict):
+                        # VectorFieldConfig.__post_init__ で dimension/similarity を検証
                         cfg = VectorFieldConfig(
                             dimension=cfg["dimension"],
                             similarity=cfg.get("similarity", "cosine"),
                             model=cfg.get("model"),
                         )
-                    sim_key = cfg.similarity.lower()
-                    java_sim = _similarity_map.get(sim_key)
-                    if java_sim is None:
-                        raise ValueError(
-                            f"Unknown vector similarity: {cfg.similarity!r}. "
-                            f"Valid values: {list(_similarity_map)}"
-                        )
-                    if cfg.model is not None:
-                        builder = builder.vectorField(
-                            field_name,
-                            int(cfg.dimension),
-                            java_sim,
-                            str(cfg.model),
-                        )
-                    else:
-                        builder = builder.vectorField(
-                            field_name,
-                            int(cfg.dimension),
-                            java_sim,
-                            None,
-                        )
+                    # similarity は VectorFieldConfig.__post_init__ で検証済み
+                    java_sim = _similarity_map[cfg.similarity.lower()]
+                    builder = builder.vectorField(
+                        field_name,
+                        int(cfg.dimension),
+                        java_sim,
+                        str(cfg.model) if cfg.model is not None else None,
+                    )
 
             self._java = builder.build()
             self.lang = lang
@@ -253,6 +256,8 @@ class SearchEngine:
             self._analytics = None
             self._closed = False
 
+        except ValueError:
+            raise
         except Exception as e:
             raise JavaSearchError(f"Failed to create LocalSearch(lang={lang})") from e
 
@@ -299,7 +304,7 @@ class SearchEngine:
                     )
                 # VECTOR フィールドを fields= で渡してはいけない
                 for name in fields:
-                    if self.field_kind(name) == "KNN_VECTOR":
+                    if self.field_kind(name) == "VECTOR":
                         raise InvalidDocumentError(
                             f"{name!r} is a vector field and cannot be passed via fields="
                         )
@@ -508,7 +513,8 @@ class SearchEngine:
             if java_info is None:
                 return None
 
-            raw_kind = str(java_info.getKind().name())
+            # FieldTypeDef から直接取得（Java API: kind(), is_stored(), get_dimension() 等）
+            raw_kind = str(java_info.kind().name())
             normalized_type = _normalize_field_type(raw_kind)
 
             dimension: Optional[int] = None
@@ -516,28 +522,24 @@ class SearchEngine:
             model: Optional[str] = None
 
             if normalized_type == "VECTOR":
-                dim_val = self._java.getVectorDimension(field)
-                if dim_val is not None:
-                    dimension = int(dim_val)
-                model_val = self._java.getVectorModel(field)
-                if model_val is not None:
-                    model = str(model_val)
-                # similarity はフィールド定義から取得（Java APIがあれば）
-                try:
-                    sim_val = self._java.getVectorSimilarity(field)
-                    if sim_val is not None:
-                        similarity = str(sim_val).lower()
-                except Exception:
-                    pass
+                dimension = int(java_info.get_dimension())
+
+                java_similarity = java_info.vectorSimilarityFunction()
+                if java_similarity is not None:
+                    similarity = str(java_similarity.name()).lower()
+
+                java_model = java_info.get_model()
+                if java_model is not None:
+                    model = str(java_model)
 
             return FieldInfo(
                 name=field,
                 type=normalized_type,
-                stored=bool(java_info.isStored()),
-                aggregatable=bool(java_info.isAggregatable()),
-                sortable=bool(java_info.isSortable()),
-                range=bool(java_info.isRange()),
-                multi_valued=bool(java_info.isMultiValued()),
+                stored=bool(java_info.is_stored()),
+                aggregatable=bool(java_info.is_aggregatable()),
+                sortable=bool(java_info.is_sortable()),
+                range=bool(java_info.is_range()),
+                multi_valued=bool(java_info.is_multiValued()),
                 dimension=dimension,
                 similarity=similarity,
                 model=model,
@@ -606,6 +608,11 @@ class SearchEngine:
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
+        if filter_query is not None and filters:
+            raise InvalidDocumentError(
+                "filter_query and filters cannot be used together"
+            )
+
         # フィールド単位の dimension validation
         info = self.field_info(field)
         if info is None:
@@ -625,7 +632,12 @@ class SearchEngine:
             expected_dim = info.dimension
 
         try:
-            vector_values = [float(v) for v in vector]
+            try:
+                vector_values = [float(v) for v in vector]
+            except (TypeError, ValueError) as e:
+                raise InvalidDocumentError(
+                    "vector must contain only numeric values"
+                ) from e
             if expected_dim is not None and len(vector_values) != expected_dim:
                 raise InvalidDocumentError(
                     f"Vector dimension mismatch for field {field!r}: "
@@ -633,7 +645,7 @@ class SearchEngine:
                 )
             vector_array = JArray(JFloat)(vector_values)
 
-            # filter_query (Lucene文字列) を優先; なければ filters (dict) を使う
+            # filter_query (Lucene文字列) を優先
             if filter_query is not None:
                 java_results = self._java.searchVector(
                     field,
@@ -641,21 +653,26 @@ class SearchEngine:
                     int(limit),
                     str(filter_query),
                 )
-            else:
+            elif filters:
+                # filters (dict) は Java の searchVector(float[], int, Map) overload を使う。
+                # このoverloadは legacy "vector" フィールド向けのみ存在する。
+                if field != "vector":
+                    raise InvalidDocumentError(
+                        "filters= is supported only for the legacy 'vector' field; "
+                        "use filter_query= for named vector fields"
+                    )
                 java_filters = _to_java_string_map(filters, argument_name="filters")
-                if java_filters is None:
-                    java_results = self._java.searchVector(
-                        field,
-                        vector_array,
-                        int(limit),
-                    )
-                else:
-                    java_results = self._java.searchVector(
-                        field,
-                        vector_array,
-                        int(limit),
-                        java_filters,
-                    )
+                java_results = self._java.searchVector(
+                    vector_array,
+                    int(limit),
+                    java_filters,
+                )
+            else:
+                java_results = self._java.searchVector(
+                    field,
+                    vector_array,
+                    int(limit),
+                )
 
             return [SearchResult.from_java(r) for r in java_results]
 
@@ -709,6 +726,24 @@ class SearchEngine:
 
         if not isinstance(text, str) or not text.strip():
             raise InvalidDocumentError("text must be a non-empty string")
+
+        # Embedding前にフィールド・次元の事前検査（高コストな埋め込み前に失敗させる）
+        info = self.field_info(field)
+        if info is None:
+            if not (field == "vector" and self.vector_dimension > 0):
+                raise InvalidDocumentError(
+                    f"Vector field {field!r} is not defined in the schema"
+                )
+        else:
+            if info.type != "VECTOR":
+                raise InvalidDocumentError(
+                    f"Field {field!r} is not a VECTOR field (type={info.type!r})"
+                )
+            if info.dimension is not None and info.dimension != self.embedding.dimension:
+                raise InvalidDocumentError(
+                    f"Embedding dimension ({self.embedding.dimension}) does not match "
+                    f"VECTOR field {field!r} dimension ({info.dimension})"
+                )
 
         vector = self.embedding.embed_query(text)
 
@@ -1034,7 +1069,7 @@ class SearchEngine:
         try:
             return [
                 f for f in self.fields()
-                if self.field_kind(f) in ("KNN_VECTOR", "VECTOR")
+                if self.field_kind(f) == "VECTOR"
             ]
         except InvalidDocumentError:
             raise
@@ -1164,7 +1199,7 @@ class SearchEngine:
             if kind is None:
                 return None
 
-            return str(kind.name())
+            return _normalize_field_type(str(kind.name()))
 
         except Exception as e:
             raise JavaSearchError(

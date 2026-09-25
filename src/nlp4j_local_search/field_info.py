@@ -33,6 +33,14 @@ class FieldInfo:
     model: Optional[str] = None
 
 
+_VALID_SIMILARITIES = frozenset({
+    "cosine",
+    "dot_product",
+    "euclidean",
+    "maximum_inner_product",
+})
+
+
 @dataclass(frozen=True)
 class VectorFieldConfig:
     """ベクトルフィールドの定義。
@@ -53,3 +61,14 @@ class VectorFieldConfig:
     dimension: int
     similarity: str = "cosine"
     model: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.dimension <= 0:
+            raise ValueError(
+                f"VectorFieldConfig.dimension must be greater than 0, got {self.dimension}"
+            )
+        if self.similarity.lower() not in _VALID_SIMILARITIES:
+            raise ValueError(
+                f"VectorFieldConfig.similarity must be one of "
+                f"{sorted(_VALID_SIMILARITIES)}, got {self.similarity!r}"
+            )
