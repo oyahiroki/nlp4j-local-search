@@ -9,6 +9,7 @@ from jpype import JArray, JFloat
 from .analytics import AnalyticsQuery, AnalyticsResult
 from .date_histogram import DateHistogramBucket
 from .errors import InvalidDocumentError, JavaSearchError
+from .field_info import FieldInfo, VectorFieldConfig, _normalize_field_type
 from .field_summary import FieldsSummary
 from .jvm import ensure_jvm
 from .result import QueryValidationResult, SearchResult
@@ -112,6 +113,7 @@ class SearchEngine:
         *,
         auto_analyze: bool = False,
         vector_dimension: Optional[int] = None,
+        vector_fields: "Optional[dict[str, Union[VectorFieldConfig, dict]]]" = None,
         embedding: "Optional[EmbeddingProvider]" = None,
         time_zone: Optional[str] = None,
         index_dir: Optional[Union[str, PathLike[str]]] = None,
@@ -134,7 +136,23 @@ class SearchEngine:
                 normal full-text indexing and search.
 
             vector_dimension:
-                Dimension of vector embedding if utilizing vector/hybrid search.
+                Legacy/default ``"vector"`` field dimension.
+                Use *vector_fields* for named vector fields.
+
+            vector_fields:
+                Named vector field definitions.  Each key is the field name;
+                the value is a :class:`~nlp4j_local_search.field_info.VectorFieldConfig`
+                or a plain ``dict`` with ``dimension``, ``similarity`` (optional),
+                and ``model`` (optional).
+
+                Example::
+
+                    SearchEngine(
+                        lang="en",
+                        vector_fields={
+                            "vector3": VectorFieldConfig(dimension=3, similarity="cosine", model="demo-3d"),
+                        },
+                    )
 
             embedding:
                 Embedding provider used to generate vectors for queries and documents.
@@ -180,6 +198,46 @@ class SearchEngine:
             if vector_dimension is not None:
                 builder = builder.vectorDimension(int(vector_dimension))
 
+            # Named vector fields
+            if vector_fields:
+                from org.apache.lucene.index import VectorSimilarityFunction  # noqa: PLC0415
+
+                _similarity_map = {
+                    "cosine": VectorSimilarityFunction.COSINE,
+                    "dot_product": VectorSimilarityFunction.DOT_PRODUCT,
+                    "euclidean": VectorSimilarityFunction.EUCLIDEAN,
+                    "maximum_inner_product": VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT,
+                }
+
+                for field_name, cfg in vector_fields.items():
+                    if isinstance(cfg, dict):
+                        cfg = VectorFieldConfig(
+                            dimension=cfg["dimension"],
+                            similarity=cfg.get("similarity", "cosine"),
+                            model=cfg.get("model"),
+                        )
+                    sim_key = cfg.similarity.lower()
+                    java_sim = _similarity_map.get(sim_key)
+                    if java_sim is None:
+                        raise ValueError(
+                            f"Unknown vector similarity: {cfg.similarity!r}. "
+                            f"Valid values: {list(_similarity_map)}"
+                        )
+                    if cfg.model is not None:
+                        builder = builder.vectorField(
+                            field_name,
+                            int(cfg.dimension),
+                            java_sim,
+                            str(cfg.model),
+                        )
+                    else:
+                        builder = builder.vectorField(
+                            field_name,
+                            int(cfg.dimension),
+                            java_sim,
+                            None,
+                        )
+
             self._java = builder.build()
             self.lang = lang
             if lang == "ja":
@@ -189,6 +247,7 @@ class SearchEngine:
             else:
                 self._default_text_field = "text"
 
+            # vector_dimension: legacy "vector" field のdimension（後方互換）
             self.vector_dimension = int(self._java.getVectorDimension())
             self.embedding: "Optional[EmbeddingProvider]" = embedding
             self._analytics = None
@@ -238,6 +297,12 @@ class SearchEngine:
                     raise InvalidDocumentError(
                         f"reserved field names cannot be used: {sorted(conflicts)}"
                     )
+                # VECTOR フィールドを fields= で渡してはいけない
+                for name in fields:
+                    if self.field_kind(name) == "KNN_VECTOR":
+                        raise InvalidDocumentError(
+                            f"{name!r} is a vector field and cannot be passed via fields="
+                        )
 
             # ベクトル文書
             if isinstance(body, Sequence) and not isinstance(body, (str, bytes)):
@@ -405,11 +470,91 @@ class SearchEngine:
         except Exception as e:
             raise JavaSearchError("Failed to search") from e
 
+    def field_info(self, field: str) -> "Optional[FieldInfo]":
+        """フィールドのスキーマ情報を返す。存在しないフィールドでは None。
+
+        例::
+
+            info = engine.field_info("vector3")
+            print(info.type)       # VECTOR
+            print(info.dimension)  # 3
+            print(info.model)      # demo-3d
+
+            info = engine.field_info("category_s")
+            print(info.type)       # KEYWORD
+
+            engine.field_info("unknown")  # None
+
+        Args:
+            field: フィールド名。
+
+        Returns:
+            :class:`~nlp4j_local_search.field_info.FieldInfo`、または ``None``。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *field* が空文字列のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if not isinstance(field, str) or not field.strip():
+            raise InvalidDocumentError("field must be a non-empty string")
+
+        try:
+            java_info = self._java.getFieldInfo(field)
+
+            if java_info is None:
+                return None
+
+            raw_kind = str(java_info.getKind().name())
+            normalized_type = _normalize_field_type(raw_kind)
+
+            dimension: Optional[int] = None
+            similarity: Optional[str] = None
+            model: Optional[str] = None
+
+            if normalized_type == "VECTOR":
+                dim_val = self._java.getVectorDimension(field)
+                if dim_val is not None:
+                    dimension = int(dim_val)
+                model_val = self._java.getVectorModel(field)
+                if model_val is not None:
+                    model = str(model_val)
+                # similarity はフィールド定義から取得（Java APIがあれば）
+                try:
+                    sim_val = self._java.getVectorSimilarity(field)
+                    if sim_val is not None:
+                        similarity = str(sim_val).lower()
+                except Exception:
+                    pass
+
+            return FieldInfo(
+                name=field,
+                type=normalized_type,
+                stored=bool(java_info.isStored()),
+                aggregatable=bool(java_info.isAggregatable()),
+                sortable=bool(java_info.isSortable()),
+                range=bool(java_info.isRange()),
+                multi_valued=bool(java_info.isMultiValued()),
+                dimension=dimension,
+                similarity=similarity,
+                model=model,
+            )
+
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError(f"Failed to get field info: {field}") from e
+
     def search_vector(
         self,
         vector: Sequence[float],
         limit: int = 10,
         *,
+        field: str = "vector",
+        filter_query: Optional[str] = None,
         filters: Optional[FilterMap] = None,
     ) -> "list[SearchResult]":
         """ベクトル検索を実行する。
@@ -418,25 +563,36 @@ class SearchEngine:
 
         例::
 
-            # フィルターなし
+            # デフォルト "vector" フィールド（後方互換）
             engine.search_vector([0.9, 0.1], limit=10)
 
-            # keyword フィールドで絞り込み（AND 結合）
+            # 任意名フィールドを指定
+            engine.search_vector([1.0, 0.0, 0.0], field="vector3", limit=10)
+
+            # Lucene クエリフィルターで絞り込み
+            engine.search_vector(
+                [1.0, 0.0, 0.0],
+                field="vector3",
+                limit=10,
+                filter_query='category_s:"vehicle"',
+            )
+
+            # keyword フィールドで絞り込み（後方互換）
             engine.search_vector([0.9, 0.1], limit=10, filters={"category": "tech"})
-            engine.search_vector([0.9, 0.1], limit=10,
-                                 filters={"category": "tech", "country": "Japan"})
 
         Args:
-            vector:  クエリベクトル（float のシーケンス）。
-            limit:   返す件数の上限（1 以上）。
-            filters: keyword フィールドの絞り込み条件（省略可）。
+            vector:       クエリベクトル（float のシーケンス）。
+            limit:        返す件数の上限（1 以上）。
+            field:        検索対象ベクトルフィールド名（デフォルト: ``"vector"``）。
+            filter_query: Lucene クエリによる絞り込み（省略可）。
+            filters:      keyword フィールドの絞り込み条件（後方互換、省略可）。
 
         Returns:
             :class:`~nlp4j_local_search.result.SearchResult` のリスト。
 
         Raises:
             :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
-                *vector_dimension* 未設定・次元数不一致・*limit* < 1 のとき。
+                フィールド未定義・次元数不一致・*limit* < 1 のとき。
             :class:`~nlp4j_local_search.errors.JavaSearchError`:
                 Java 層でエラーが発生したとき。
         """
@@ -450,25 +606,56 @@ class SearchEngine:
         if limit < 1:
             raise InvalidDocumentError("limit must be greater than 0")
 
-        if self.vector_dimension <= 0:
-            raise InvalidDocumentError(
-                "vector_dimension must be specified in __init__ to search with vectors"
-            )
+        # フィールド単位の dimension validation
+        info = self.field_info(field)
+        if info is None:
+            # 後方互換: vectorDimension= で定義したデフォルト "vector" フィールドは
+            # getFieldInfo() が None を返す場合がある。self.vector_dimension でフォールバック。
+            if field == "vector" and self.vector_dimension > 0:
+                expected_dim: Optional[int] = self.vector_dimension
+            else:
+                raise InvalidDocumentError(
+                    f"Vector field {field!r} is not defined in the schema"
+                )
+        else:
+            if info.type != "VECTOR":
+                raise InvalidDocumentError(
+                    f"Field {field!r} is not a VECTOR field (type={info.type!r})"
+                )
+            expected_dim = info.dimension
 
         try:
             vector_values = [float(v) for v in vector]
-            if len(vector_values) != self.vector_dimension:
+            if expected_dim is not None and len(vector_values) != expected_dim:
                 raise InvalidDocumentError(
-                    f"Vector dimension mismatch: expected {self.vector_dimension}, "
-                    f"got {len(vector_values)}"
+                    f"Vector dimension mismatch for field {field!r}: "
+                    f"expected {expected_dim}, got {len(vector_values)}"
                 )
             vector_array = JArray(JFloat)(vector_values)
-            java_filters = _to_java_string_map(filters, argument_name="filters")
 
-            if java_filters is None:
-                java_results = self._java.searchVector(vector_array, int(limit))
+            # filter_query (Lucene文字列) を優先; なければ filters (dict) を使う
+            if filter_query is not None:
+                java_results = self._java.searchVector(
+                    field,
+                    vector_array,
+                    int(limit),
+                    str(filter_query),
+                )
             else:
-                java_results = self._java.searchVector(vector_array, int(limit), java_filters)
+                java_filters = _to_java_string_map(filters, argument_name="filters")
+                if java_filters is None:
+                    java_results = self._java.searchVector(
+                        field,
+                        vector_array,
+                        int(limit),
+                    )
+                else:
+                    java_results = self._java.searchVector(
+                        field,
+                        vector_array,
+                        int(limit),
+                        java_filters,
+                    )
 
             return [SearchResult.from_java(r) for r in java_results]
 
@@ -476,6 +663,61 @@ class SearchEngine:
             raise
         except Exception as e:
             raise JavaSearchError("Failed to search vectors") from e
+
+    def search_vector_by_text(
+        self,
+        text: str,
+        limit: int = 10,
+        *,
+        field: str = "vector",
+        filter_query: Optional[str] = None,
+    ) -> "list[SearchResult]":
+        """テキストをEmbeddingでベクトル化し、ベクトル検索を実行する。
+
+        :attr:`embedding` が設定されている必要があります。
+
+        例::
+
+            results = engine.search_vector_by_text(
+                "ヒューズの交換",
+                field="vector1024",
+                limit=10,
+                filter_query='maker_s:"ニッサン"',
+            )
+
+        Args:
+            text:         クエリテキスト。
+            limit:        返す件数の上限（1 以上）。
+            field:        検索対象ベクトルフィールド名（デフォルト: ``"vector"``）。
+            filter_query: Lucene クエリによる絞り込み（省略可）。
+
+        Returns:
+            :class:`~nlp4j_local_search.result.SearchResult` のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *embedding* 未設定・*text* が空のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if self.embedding is None:
+            raise InvalidDocumentError(
+                "embedding must be set in __init__ to use search_vector_by_text()"
+            )
+
+        if not isinstance(text, str) or not text.strip():
+            raise InvalidDocumentError("text must be a non-empty string")
+
+        vector = self.embedding.embed_query(text)
+
+        return self.search_vector(
+            vector,
+            limit,
+            field=field,
+            filter_query=filter_query,
+        )
 
     def search_json(
         self,
@@ -771,6 +1013,33 @@ class SearchEngine:
             return [str(f) for f in java_fields]
         except Exception as e:
             raise JavaSearchError("Failed to get aggregatable fields") from e
+
+    def vector_fields(self) -> "list[str]":
+        """VECTORフィールド名の一覧を返す。
+
+        例::
+
+            print(engine.vector_fields())
+            # ['vector384', 'vector1024']
+
+        Returns:
+            VECTOR フィールド名のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        try:
+            return [
+                f for f in self.fields()
+                if self.field_kind(f) in ("KNN_VECTOR", "VECTOR")
+            ]
+        except InvalidDocumentError:
+            raise
+        except Exception as e:
+            raise JavaSearchError("Failed to get vector fields") from e
 
     def fields_summary(self) -> FieldsSummary:
         """実際に値を持つフィールドの概要情報を返す。

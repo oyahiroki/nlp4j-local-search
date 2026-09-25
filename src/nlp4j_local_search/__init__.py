@@ -8,6 +8,7 @@ from .errors import (
     JavaSearchError,
     InvalidDocumentError,
 )
+from .field_info import FieldInfo, VectorFieldConfig
 from .field_summary import FieldSummary, FieldsSummary
 from .result import QueryValidationResult, SearchResult
 from .view import ViewBucket, ViewField, ViewResult
@@ -30,6 +31,8 @@ __all__ = [
     "JavaSearchError",
     "InvalidDocumentError",
     "DateHistogramBucket",
+    "FieldInfo",
+    "VectorFieldConfig",
     "FieldSummary",
     "FieldsSummary",
     "ViewResult",

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from .field_info import _normalize_field_type
+
 
 def _truncate_example(
     value: Optional[str],
@@ -52,7 +54,7 @@ class FieldSummary:
 
         return cls(
             field=str(value.getField()),
-            kind=str(value.getKind().name()),
+            kind=_normalize_field_type(str(value.getKind().name())),
             aggregatable=bool(value.isAggregatable()),
             document_count=int(value.getDocumentCount()),
             documents_with_value=(
