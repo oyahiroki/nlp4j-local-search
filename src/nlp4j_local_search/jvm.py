@@ -47,7 +47,7 @@ def _detect_java_major_version(jvm_path: str) -> Optional[int]:
 
 
 def default_jar_path() -> Path:
-    return Path(__file__).resolve().parent / "jars" / "1.7" / "nlp4j-localsearch.jar"
+    return Path(__file__).resolve().parent / "jars" / "1.8" / "nlp4j-localsearch.jar"
 
 
 def extract_jar_contents(jar_path: Path) -> tuple[list[str], str]:
@@ -92,6 +92,10 @@ def extract_jar_contents(jar_path: Path) -> tuple[list[str], str]:
     return extracted_jars, str(res_dir)
 
 
+# Minimum Java major version required by the bundled JAR.
+_REQUIRED_JAVA_MAJOR = 21
+
+
 def ensure_jvm(
     classpath: Optional[Sequence[Union[str, Path]]] = None,
     jvm_args: Optional[Sequence[str]] = None,
@@ -106,6 +110,22 @@ def ensure_jvm(
 
     if jpype.isJVMStarted():
         return
+
+    # Verify Java version before starting the JVM.
+    # The bundled JAR requires Java _REQUIRED_JAVA_MAJOR or later.
+    try:
+        jvm_path = jpype.getDefaultJVMPath()
+        major = _detect_java_major_version(jvm_path)
+        if major is not None and major < _REQUIRED_JAVA_MAJOR:
+            raise JVMStartError(
+                f"Java {_REQUIRED_JAVA_MAJOR} or later is required, "
+                f"but Java {major} was detected. "
+                f"Please install Java {_REQUIRED_JAVA_MAJOR}+ and set JAVA_HOME accordingly."
+            )
+    except JVMStartError:
+        raise
+    except Exception:
+        pass  # バージョン取得失敗時は続行し、JVM 起動時のエラーに委ねる
 
     jar_path = default_jar_path()
 

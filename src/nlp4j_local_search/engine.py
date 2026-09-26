@@ -241,14 +241,24 @@ class SearchEngine:
 
             # Named vector fields
             if vector_fields:
-                from org.apache.lucene.index import VectorSimilarityFunction  # noqa: PLC0415
-
-                _similarity_map = {
-                    "cosine": VectorSimilarityFunction.COSINE,
-                    "dot_product": VectorSimilarityFunction.DOT_PRODUCT,
-                    "euclidean": VectorSimilarityFunction.EUCLIDEAN,
-                    "maximum_inner_product": VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT,
-                }
+                # nlp4j 1.8+ は nlp4j.lucene.VectorSimilarity を提供する。
+                # 旧 JAR との後方互換のため org.apache.lucene.index.VectorSimilarityFunction も試みる。
+                try:
+                    from nlp4j.lucene import VectorSimilarity as _VS  # noqa: PLC0415
+                    _similarity_map = {
+                        "cosine": _VS.COSINE,
+                        "dot_product": _VS.DOT_PRODUCT,
+                        "euclidean": _VS.EUCLIDEAN,
+                        "maximum_inner_product": _VS.MAXIMUM_INNER_PRODUCT,
+                    }
+                except ImportError:
+                    from org.apache.lucene.index import VectorSimilarityFunction as _VS  # noqa: PLC0415
+                    _similarity_map = {
+                        "cosine": _VS.COSINE,
+                        "dot_product": _VS.DOT_PRODUCT,
+                        "euclidean": _VS.EUCLIDEAN,
+                        "maximum_inner_product": _VS.MAXIMUM_INNER_PRODUCT,
+                    }
 
                 for field_name, cfg in vector_fields.items():
                     if isinstance(cfg, dict):
@@ -424,6 +434,36 @@ class SearchEngine:
         for doc in docs:
             self.add_json(doc)
 
+    def delete(self, id: str) -> None:
+        """ドキュメントを ID で削除する。
+
+        削除はインデックスに即座に反映されますが、 :meth:`commit` を呼び出すまで
+        検索結果には反映されません。
+
+        例::
+
+            engine.delete("1")
+            engine.commit()
+
+        Args:
+            id: 削除するドキュメントの ID。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *id* が空文字列のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if not isinstance(id, str) or not id:
+            raise InvalidDocumentError("id must be a non-empty string")
+
+        try:
+            self._java.delete(str(id))
+        except Exception as e:
+            raise JavaSearchError(f"Failed to delete document: {id!r}") from e
+
     def commit(self) -> None:
         self._ensure_open()
 
@@ -574,9 +614,13 @@ class SearchEngine:
             if normalized_type == "VECTOR":
                 dimension = int(java_info.get_dimension())
 
-                java_similarity = java_info.vectorSimilarityFunction()
-                if java_similarity is not None:
-                    similarity = str(java_similarity.name()).lower()
+                # JAR 1.8+: vectorSimilarity() / 旧 JAR: vectorSimilarityFunction()
+                _vsf = getattr(java_info, "vectorSimilarity", None) \
+                    or getattr(java_info, "vectorSimilarityFunction", None)
+                if _vsf is not None:
+                    java_similarity = _vsf()
+                    if java_similarity is not None:
+                        similarity = str(java_similarity.name()).lower()
 
                 java_model = java_info.get_model()
                 if java_model is not None:
@@ -1428,7 +1472,7 @@ class SearchEngine:
                 )
 
         try:
-            from nlp4j.lucene9 import DateHistogramInterval  # noqa: PLC0415
+            from nlp4j.lucene10 import DateHistogramInterval  # noqa: PLC0415
 
             normalized_interval = interval.strip().lower()
             if normalized_interval not in {"year", "month", "hour"}:

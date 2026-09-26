@@ -164,7 +164,8 @@ def test_cli_view_no_interval_passes_size():
 
     kw = cli.engine.last_view_kwargs
     assert kw["interval"] is None
-    assert kw["size"] == 10  # default size forwarded
+    # size は指定なし → None を渡して engine.view() のデフォルト(10)に委ねる
+    assert kw["size"] is None
 
 
 # ---------------------------------------------------------------------------
