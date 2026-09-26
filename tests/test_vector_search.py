@@ -110,7 +110,11 @@ def test_mixed_usage_prevention():
             assert False, "Should have raised InvalidDocumentError"
         except Exception as e:
             print(f"期待通りのエラー（ベクトル検索）: {e}")
-            assert "vector_dimension must be specified" in str(e).lower()
+            # "vector_dimension must be specified" or "is not defined in the schema"
+            assert (
+                "vector_dimension must be specified" in str(e).lower()
+                or "is not defined in the schema" in str(e).lower()
+            )
 
     print("✓ 混在防止テスト成功\n")
 

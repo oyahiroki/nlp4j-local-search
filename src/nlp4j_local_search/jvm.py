@@ -1,10 +1,49 @@
 # JPype/JVM起動処理
+import os
+import re
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
 from .errors import JVMStartError
+
+
+def _detect_java_major_version(jvm_path: str) -> Optional[int]:
+    """JVM ライブラリパスから Java メジャーバージョンを検出する。
+
+    libjvm.so / jvm.dll / libjvm.dylib の親ディレクトリを上へ辿り、
+    最初に見つかった ``bin/java`` を ``-version`` で実行してバージョンを返す。
+    Linux / Windows / macOS のいずれのディレクトリ構造にも対応する。
+
+    Returns:
+        メジャーバージョン (例: 25)、または検出失敗時は None。
+    """
+    path = Path(jvm_path).resolve()
+    executable = "java.exe" if os.name == "nt" else "java"
+
+    for parent in path.parents:
+        java_bin = parent / "bin" / executable
+        if not java_bin.is_file():
+            continue
+
+        try:
+            result = subprocess.run(
+                [str(java_bin), "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            continue
+
+        version_output = result.stderr or result.stdout
+        m = re.search(r'version "(\d+)', version_output)
+        if m:
+            return int(m.group(1))
+
+    return None
 
 
 def default_jar_path() -> Path:
@@ -86,6 +125,19 @@ def ensure_jvm(
         cp.extend(str(Path(p)) for p in classpath)
 
     args = list(jvm_args or [])
+
+    # Java 24+ では JPype の JNI ネイティブライブラリロードに対して
+    # "restricted method" 警告が出る（将来バージョンではブロック予定）。
+    # classpath 上の unnamed module に native access を許可するオプションを自動付与する。
+    _NATIVE_ACCESS_FLAG = "--enable-native-access=ALL-UNNAMED"
+    if _NATIVE_ACCESS_FLAG not in args:
+        try:
+            major = _detect_java_major_version(jpype.getDefaultJVMPath())
+            if major is not None and major >= 24:
+                args.append(_NATIVE_ACCESS_FLAG)
+        except Exception:
+            # バージョン取得に失敗した場合は安全のためオプションを追加しない
+            pass
 
     try:
         jpype.startJVM(*args, classpath=cp)

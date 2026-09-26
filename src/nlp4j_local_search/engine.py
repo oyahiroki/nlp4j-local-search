@@ -114,7 +114,7 @@ class SearchEngine:
         auto_analyze: bool = False,
         vector_dimension: Optional[int] = None,
         vector_fields: "Optional[dict[str, Union[VectorFieldConfig, dict]]]" = None,
-        embedding: "Optional[EmbeddingProvider]" = None,
+        embedding: "Union[bool, EmbeddingProvider, None]" = False,
         time_zone: Optional[str] = None,
         index_dir: Optional[Union[str, PathLike[str]]] = None,
         classpath: Optional[Sequence[str]] = None,
@@ -157,6 +157,23 @@ class SearchEngine:
             embedding:
                 Embedding provider used to generate vectors for queries and documents.
 
+                Accepted values:
+
+                ``True``
+                    Use the default provider (Multilingual-E5-large via
+                    ``nlp4j-local-search-embedding``).  Requires the package to
+                    be installed.
+
+                ``False`` / ``None`` (default)
+                    Embedding disabled.
+
+                ``EmbeddingProvider`` instance
+                    Use the supplied custom provider.
+
+                When *embedding* is set, :meth:`add` automatically generates a
+                vector for every text document and :meth:`search_semantic` becomes
+                available.
+
             time_zone:
                 Time zone string (e.g. ``"Asia/Tokyo"``) for date indexing and enrichment.
 
@@ -170,12 +187,21 @@ class SearchEngine:
             jvm_args:
                 Additional JVM arguments.
         """
+        # --- Resolve embedding provider ------------------------------------------
+        if embedding is True:
+            from .embedding import create_default_embedding  # noqa: PLC0415
+            resolved_embedding = create_default_embedding()
+        elif embedding is False or embedding is None:
+            resolved_embedding = None
+        else:
+            resolved_embedding = embedding  # EmbeddingProvider instance
+
         # Resolve vector_dimension from embedding if provided
-        if embedding is not None:
+        if resolved_embedding is not None:
             if vector_dimension is None and not vector_fields:
                 # 後方互換: embedding のみ指定した場合はデフォルト "vector" フィールドへ反映
-                vector_dimension = embedding.dimension
-            elif vector_dimension is not None and vector_dimension != embedding.dimension:
+                vector_dimension = resolved_embedding.dimension
+            elif vector_dimension is not None and vector_dimension != resolved_embedding.dimension:
                 raise ValueError(
                     "vector_dimension does not match embedding.dimension"
                 )
@@ -252,7 +278,7 @@ class SearchEngine:
 
             # vector_dimension: legacy "vector" field のdimension（後方互換）
             self.vector_dimension = int(self._java.getVectorDimension())
-            self.embedding: "Optional[EmbeddingProvider]" = embedding
+            self.embedding: "Optional[EmbeddingProvider]" = resolved_embedding
             self._analytics = None
             self._closed = False
 
@@ -332,16 +358,40 @@ class SearchEngine:
 
             # テキスト文書
             else:
-                if fields:
+                text = str(body)
+
+                if self.embedding is not None:
+                    # 自動 Embedding: text → vector を生成して text と一緒に登録
+                    vectors = self.embedding.embed_documents([text])
+                    if len(vectors) != 1:
+                        raise InvalidDocumentError(
+                            "embedding provider must return exactly one vector"
+                        )
+                    vector = vectors[0]
+                    if len(vector) != self.embedding.dimension:
+                        raise InvalidDocumentError(
+                            "embedding provider returned an invalid vector dimension"
+                        )
+                    # add_json 経由で text + vector + 任意フィールドをひとつの文書として登録
+                    document: "dict[str, Any]" = {
+                        "id": str(id_or_doc),
+                        self._default_text_field: text,
+                        "vector": list(vector),
+                    }
+                    if fields:
+                        document.update(dict(fields))
+                    self.add_json(document)
+
+                elif fields:
                     # add_json 経由で追加フィールドをまとめて登録する
                     document = {
                         "id": str(id_or_doc),
-                        self._default_text_field: str(body),
+                        self._default_text_field: text,
                         **dict(fields),
                     }
                     self.add_json(document)
                 else:
-                    self._java.add(str(id_or_doc), str(body))
+                    self._java.add(str(id_or_doc), text)
 
         except InvalidDocumentError:
             raise
@@ -751,6 +801,67 @@ class SearchEngine:
             vector,
             limit,
             field=field,
+            filter_query=filter_query,
+        )
+
+    def search_semantic(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        filter_query: Optional[str] = None,
+    ) -> "list[SearchResult]":
+        """セマンティック（ベクトル）検索を実行する。
+
+        クエリテキストを Embedding でベクトル化し、デフォルト ``"vector"`` フィールドを検索する。
+
+        :meth:`add` で登録したテキストが自動的にベクトル化されるため、
+        ``SearchEngine(embedding=True)`` または ``SearchEngine(embedding=provider)``
+        を使用している場合にのみ利用できます。
+
+        例::
+
+            engine = SearchEngine(lang="ja", embedding=True)
+
+            engine.add("1", "京都は日本の古都です")
+            engine.add("2", "東京は日本最大の都市です")
+            engine.commit()
+
+            results = engine.search_semantic("日本の古い都")
+
+            # Lucene フィルターと組み合わせ
+            results = engine.search_semantic(
+                "日本の古い都",
+                filter_query='category_s:"city"',
+            )
+
+        Args:
+            query:        自然言語クエリテキスト。
+            limit:        返す件数の上限（1 以上）。
+            filter_query: Lucene クエリによる絞り込み（省略可）。
+
+        Returns:
+            :class:`~nlp4j_local_search.result.SearchResult` のリスト。
+
+        Raises:
+            :class:`~nlp4j_local_search.errors.InvalidDocumentError`:
+                *embedding* が未設定のとき、または *query* が空のとき。
+            :class:`~nlp4j_local_search.errors.JavaSearchError`:
+                Java 層でエラーが発生したとき。
+        """
+        self._ensure_open()
+
+        if self.embedding is None:
+            raise InvalidDocumentError(
+                "Semantic search is not enabled. "
+                "Create SearchEngine with embedding=True "
+                "or provide an EmbeddingProvider."
+            )
+
+        return self.search_vector_by_text(
+            query,
+            limit,
+            field="vector",
             filter_query=filter_query,
         )
 

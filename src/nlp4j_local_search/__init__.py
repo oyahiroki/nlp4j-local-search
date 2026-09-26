@@ -1,6 +1,6 @@
 from .analytics import AnalyticsBucket, AnalyticsKeyword, AnalyticsQuery, AnalyticsResult
 from .date_histogram import DateHistogramBucket
-from .embedding import EmbeddingProvider, Vector
+from .embedding import EmbeddingProvider, MultilingualE5LargeEmbedding, Vector
 from .engine import SearchEngine
 from .errors import (
     SearchEngineError,
@@ -25,6 +25,7 @@ __all__ = [
     "AnalyticsKeyword",
     "AnalyticsQuery",
     "EmbeddingProvider",
+    "MultilingualE5LargeEmbedding",
     "Vector",
     "SearchEngineError",
     "JVMStartError",
